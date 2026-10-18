@@ -34,6 +34,17 @@ struct TallyApp: App {
             CommandGroup(replacing: .printItem) {
                 Button("Print…") { library.printDocument() }.keyboardShortcut("p")
             }
+            CommandGroup(after: .textEditing) {
+                Menu("Find") {
+                    Button("Find…") { FindAction.send(.showFindInterface) }.keyboardShortcut("f")
+                    Button("Find and Replace…") { FindAction.send(.showReplaceInterface) }
+                        .keyboardShortcut("f", modifiers: [.command, .option])
+                    Button("Find Next") { FindAction.send(.nextMatch) }.keyboardShortcut("g")
+                    Button("Find Previous") { FindAction.send(.previousMatch) }
+                        .keyboardShortcut("g", modifiers: [.command, .shift])
+                    Button("Use Selection for Find") { FindAction.send(.setSearchString) }.keyboardShortcut("e")
+                }
+            }
             CommandGroup(after: .pasteboard) {
                 Divider()
                 Button("Copy All with Results") { library.copyAllWithResults() }
@@ -62,6 +73,15 @@ struct TallyApp: App {
             SettingsView(library: library)
         }
         .windowResizability(.contentSize)
+    }
+}
+
+/// Drives the editor's native find bar (NSTextFinder) from the menu.
+enum FindAction {
+    static func send(_ action: NSTextFinder.Action) {
+        let item = NSMenuItem()
+        item.tag = action.rawValue
+        NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: item)
     }
 }
 

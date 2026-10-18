@@ -330,6 +330,8 @@ struct EditorView: NSViewRepresentable {
         tv.isContinuousSpellCheckingEnabled = false
         tv.isGrammarCheckingEnabled = false
         tv.smartInsertDeleteEnabled = false
+        tv.usesFindBar = true
+        tv.isIncrementalSearchingEnabled = true
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
         tv.autoresizingMask = [.width]
