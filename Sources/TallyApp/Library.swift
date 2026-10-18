@@ -179,6 +179,13 @@ final class Library {
         evaluate()
     }
 
+    /// Moves the selection up or down the sidebar list.
+    func selectAdjacent(_ offset: Int) {
+        guard !files.isEmpty else { return }
+        let i = files.firstIndex { $0.url == selection } ?? 0
+        select(files[(i + offset + files.count) % files.count].url)
+    }
+
     func edit(_ newText: String) {
         guard newText != text else { return }
         text = newText

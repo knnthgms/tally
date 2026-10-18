@@ -9,13 +9,14 @@ struct TallyApp: App {
     var body: some Scene {
         Window("Tally", id: "main") {
             ContentView(library: library)
-                .frame(minWidth: 620, minHeight: 360)
+                .frame(minWidth: 560, minHeight: 340)
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .defaultSize(width: 860, height: 580)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Calculation") { library.newFile() }.keyboardShortcut("n")
+                Button("New Calculation") { NotificationCenter.default.post(name: .newCalculation, object: nil) }
+                    .keyboardShortcut("n")
                 Button("Rename…") { NotificationCenter.default.post(name: .renameCurrent, object: nil) }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(library.selection == nil)
@@ -38,39 +39,66 @@ struct TallyApp: App {
                 Button("Copy All with Results") { library.copyAllWithResults() }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
             }
+            CommandGroup(replacing: .sidebar) {
+                Button("Toggle Sidebar") { NotificationCenter.default.post(name: .toggleSidebar, object: nil) }
+                    .keyboardShortcut("s", modifiers: [.command, .control])
+                Divider()
+                Button("Zoom In") { Zoom.step(1) }.keyboardShortcut("+")
+                Button("Zoom Out") { Zoom.step(-1) }.keyboardShortcut("-")
+                Button("Actual Size") { Zoom.reset() }.keyboardShortcut("0")
+                Divider()
+                Button("Previous Calculation") { library.selectAdjacent(-1) }
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                Button("Next Calculation") { library.selectAdjacent(1) }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                Divider()
+            }
             CommandMenu("Rates") {
                 Button("Refresh Exchange Rates") { library.refreshRates(force: true) }
-            }
-            CommandGroup(after: .sidebar) {
-                Button("Toggle Sidebar") { NotificationCenter.default.post(name: .toggleSidebar, object: nil) }
-                    .keyboardShortcut("\\", modifiers: .command)
-            }
-            CommandGroup(after: .textFormatting) {
-                Button("Bigger") { adjustFont(1) }.keyboardShortcut("+")
-                Button("Smaller") { adjustFont(-1) }.keyboardShortcut("-")
-                Button("Actual Size") { UserDefaults.standard.set(15.0, forKey: "fontSize") }.keyboardShortcut("0")
             }
         }
 
         Settings {
             SettingsView(library: library)
         }
+        .windowResizability(.contentSize)
+    }
+}
+
+/// Interface zoom (⌘+ / ⌘- / ⌘0), applied on top of the editor font size.
+enum Zoom {
+    static let levels: [Double] = [0.8, 0.9, 1.0, 1.1, 1.2, 1.35, 1.5, 1.7, 2.0]
+
+    static var current: Double { UserDefaults.standard.object(forKey: "zoom") as? Double ?? 1 }
+
+    static func step(_ direction: Int) {
+        let i = levels.enumerated().min { abs($0.element - current) < abs($1.element - current) }?.offset ?? 2
+        let next = levels[max(0, min(levels.count - 1, i + direction))]
+        withAnimation(.snappy(duration: 0.22)) { UserDefaults.standard.set(next, forKey: "zoom") }
     }
 
-    private func adjustFont(_ delta: Double) {
-        let d = UserDefaults.standard
-        let size = (d.object(forKey: "fontSize") as? Double ?? 15) + delta
-        d.set(min(32, max(10, size)), forKey: "fontSize")
+    static func reset() {
+        withAnimation(.snappy(duration: 0.22)) { UserDefaults.standard.set(1.0, forKey: "zoom") }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var ratesTimer: Timer?
+    private var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Re-checks periodically; refreshRates skips the fetch unless the configured interval has passed.
         ratesTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { _ in
             MainActor.assumeIsolated { Library.shared.refreshRates(force: false) }
+        }
+        // ⌘= zooms in too, like browsers and most apps (the menu item shows ⌘+).
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if mods == .command, event.charactersIgnoringModifiers == "=" {
+                Zoom.step(1)
+                return nil
+            }
+            return event
         }
     }
 

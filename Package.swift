@@ -1,12 +1,13 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.0
 import PackageDescription
 
 let package = Package(
     name: "Tally",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     targets: [
         .target(name: "TallyEngine", path: "Sources/TallyEngine"),
         .executableTarget(name: "TallyApp", dependencies: ["TallyEngine"], path: "Sources/TallyApp"),
         .testTarget(name: "TallyEngineTests", dependencies: ["TallyEngine"], path: "Tests/TallyEngineTests"),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )

@@ -15,6 +15,9 @@ final class CalcTextView: NSTextView {
     var copyText: ((Int) -> String?)?
 
     private var copiedLine: Int?
+    /// 1 while "Copied" shows, easing to 0 as the result fades back.
+    private var copyFade: CGFloat = 0
+    private var fadeTimer: Timer?
     private var hoverLine: Int?
     private var baseFont: NSFont { FontCatalog.font(style.fontID, size: style.fontSize) }
     private var paragraph = NSParagraphStyle()
@@ -127,16 +130,22 @@ final class CalcTextView: NSTextView {
         para.alignment = .right
         para.lineBreakMode = .byTruncatingHead
         for s in slots() where s.rect.intersects(dirtyRect) {
-            let copied = s.line == copiedLine
-            if s.line == hoverLine || copied {
+            let fade = s.line == copiedLine ? copyFade : 0
+            if s.line == hoverLine || fade > 0 {
                 let size = (s.text as NSString).size(withAttributes: [.font: baseFont])
                 let w = min(s.rect.width, size.width) + 12
                 let bg = NSRect(x: s.rect.maxX - w + 6, y: s.rect.minY + 1, width: w, height: s.rect.height - 2)
-                t.result.withAlphaComponent(copied ? 0.22 : 0.12).setFill()
+                t.result.withAlphaComponent((s.line == hoverLine ? 0.12 : 0) + 0.12 * fade).setFill()
                 NSBezierPath(roundedRect: bg, xRadius: 5, yRadius: 5).fill()
             }
-            let attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: t.result, .paragraphStyle: para]
-            (copied ? "Copied" : s.text).draw(with: s.rect, options: [.usesLineFragmentOrigin], attributes: attrs)
+            func draw(_ text: String, _ alpha: CGFloat) {
+                guard alpha > 0.01 else { return }
+                let attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: t.result.withAlphaComponent(alpha),
+                                                            .paragraphStyle: para]
+                text.draw(with: s.rect, options: [.usesLineFragmentOrigin], attributes: attrs)
+            }
+            draw(s.text, 1 - fade)
+            draw("Copied", fade)
         }
     }
 
@@ -152,9 +161,24 @@ final class CalcTextView: NSTextView {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(copyText?(s.line) ?? s.text, forType: .string)
         copiedLine = s.line
-        refreshOverlay()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-            if self?.copiedLine == s.line { self?.copiedLine = nil; self?.refreshOverlay() }
+        animateCopy(to: 1, duration: 0.12) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                guard self?.copiedLine == s.line else { return }
+                self?.animateCopy(to: 0, duration: 0.3) { self?.copiedLine = nil }
+            }
+        }
+    }
+
+    private func animateCopy(to target: CGFloat, duration: TimeInterval, then done: @escaping () -> Void) {
+        fadeTimer?.invalidate()
+        let start = copyFade, began = Date()
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let p = min(1, Date().timeIntervalSince(began) / duration)
+            let eased = 1 - pow(1 - p, 3)
+            self.copyFade = start + (target - start) * eased
+            self.overlay.needsDisplay = true
+            if p >= 1 { timer.invalidate(); done() }
         }
     }
 
@@ -272,6 +296,14 @@ struct EditorView: NSViewRepresentable {
                 tv.string = library.text
                 tv.undoManager?.removeAllActions()
                 tv.setSelectedRange(NSRange(location: 0, length: 0))
+                tv.scrollToBeginningOfDocument(nil)
+                // Soft fade when switching calculations.
+                scroll.alphaValue = 0.25
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.18
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    scroll.animator().alphaValue = 1
+                }
             }
         }
         tv.results = library.results
