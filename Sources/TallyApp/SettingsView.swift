@@ -112,6 +112,7 @@ private struct GeneralSettings: View {
     let library: Library
     @AppStorage("decimals") private var decimals = 2
     @AppStorage("grouping") private var grouping = true
+    @AppStorage("indianGrouping") private var indianGrouping = false
     @AppStorage("use24Hour") private var use24Hour = false
     @AppStorage("anglesInDegrees") private var anglesInDegrees = false
     @AppStorage("copyMode") private var copyMode = "formatted"
@@ -123,6 +124,13 @@ private struct GeneralSettings: View {
                     Stepper("\(decimals)", value: $decimals, in: 0...10).monospacedDigit()
                 }
                 Row(label: "Thousands separators") { Toggle("", isOn: $grouping).toggleStyle(.switch).labelsHidden() }
+                Row(label: "Digit grouping") {
+                    Picker("", selection: $indianGrouping) {
+                        Text("1,234,567").tag(false)
+                        Text("12,34,567").tag(true)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 170).disabled(!grouping)
+                }
                 Row(label: "Trigonometry", caption: "For plain numbers like sin(30); 30° always works", divider: false) {
                     Picker("", selection: $anglesInDegrees) {
                         Text("Radians").tag(false)
@@ -146,6 +154,7 @@ private struct GeneralSettings: View {
         }
         .onChange(of: decimals) { library.applySettings() }
         .onChange(of: grouping) { library.applySettings() }
+        .onChange(of: indianGrouping) { library.applySettings() }
         .onChange(of: use24Hour) { library.applySettings() }
         .onChange(of: anglesInDegrees) { library.applySettings() }
     }

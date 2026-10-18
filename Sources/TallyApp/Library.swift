@@ -56,6 +56,7 @@ final class Library {
         s.decimals = d.object(forKey: "decimals") as? Int ?? 2
         s.grouping = d.object(forKey: "grouping") as? Bool ?? true
         s.use24Hour = d.object(forKey: "use24Hour") as? Bool ?? false
+        s.indianGrouping = d.bool(forKey: "indianGrouping")
         engine.formatter.settings = s
         engine.anglesInDegrees = d.bool(forKey: "anglesInDegrees")
         evaluate()
@@ -294,13 +295,16 @@ final class Library {
     // MARK: Export
 
     /// The document with each result appended, columns aligned.
+    /// The document with results appended Numi-style: "debt = coral + regalia = ₹84,568.87".
     func textWithResults() -> String {
-        let lines = text.components(separatedBy: "\n")
-        let width = min(60, lines.map(\.count).max() ?? 0)
-        return zip(lines, results).map { line, r in
-            guard let d = r.display else { return line }
-            return line.padding(toLength: max(width, line.count), withPad: " ", startingAt: 0) + "  = " + d
+        zip(text.components(separatedBy: "\n"), results).map { line, r in
+            r.display.map { line + " = " + $0 } ?? line
         }.joined(separator: "\n")
+    }
+
+    /// Pasted text with copied results removed, judged against the document above the paste point.
+    func cleanPaste(_ pasted: String, context: String) -> String {
+        engine.stripPastedResults(pasted, context: context)
     }
 
     func export() {
@@ -311,9 +315,22 @@ final class Library {
         try? textWithResults().write(to: url, atomically: true, encoding: .utf8)
     }
 
+    /// Cleans a document that was pasted with results attached (e.g. from Numi). Undoable.
+    func removeCopiedResults() {
+        let cleaned = engine.stripPastedResults(text)
+        guard cleaned != text else { return }
+        if let tv = textView {
+            tv.insertText(cleaned, replacementRange: NSRange(location: 0, length: (tv.string as NSString).length))
+        } else {
+            edit(cleaned)
+        }
+    }
+
     func copyAllWithResults() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(textWithResults(), forType: .string)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(textWithResults(), forType: .string)
+        pb.setString(text, forType: CalcTextView.rawType)
     }
 
     func printDocument() {

@@ -38,6 +38,7 @@ struct TallyApp: App {
                 Divider()
                 Button("Copy All with Results") { library.copyAllWithResults() }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
+                Button("Remove Copied Results") { library.removeCopiedResults() }
             }
             SidebarCommands()
             CommandGroup(after: .sidebar) {

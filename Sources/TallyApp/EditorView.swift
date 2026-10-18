@@ -21,6 +21,11 @@ final class CalcTextView: NSTextView {
     }
     /// Text to put on the clipboard when a result is clicked (lets settings choose number-only copies).
     var copyText: ((Int) -> String?)?
+    /// Strips results from pasted text, given the document above the paste point.
+    var cleanPaste: ((String, String) -> String)?
+
+    /// The selection exactly as typed, so Tally-to-Tally pastes don't need any result stripping.
+    static let rawType = NSPasteboard.PasteboardType("com.kengomes.tally.source")
 
     private var copiedLine: Int?
     /// 1 while "Copied" shows, easing to 0 as the result fades back.
@@ -157,6 +162,67 @@ final class CalcTextView: NSTextView {
         }
     }
 
+    // MARK: Copy & paste
+
+    /// Like Numi: copying whole lines carries their results ("rent * 12 = $17,400").
+    override func copy(_ sender: Any?) {
+        let range = selectedRange()
+        guard range.length > 0 else { return super.copy(sender) }
+        let ns = string as NSString
+        let raw = ns.substring(with: range)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(withResults(range), forType: .string)
+        pb.setString(raw, forType: Self.rawType)
+    }
+
+    override func cut(_ sender: Any?) {
+        guard selectedRange().length > 0 else { return }
+        copy(sender)
+        insertText("", replacementRange: selectedRange())
+    }
+
+    private func withResults(_ range: NSRange) -> String {
+        let ns = string as NSString
+        let raw = ns.substring(with: range)
+        // A fragment inside one line copies as plain text.
+        let first = ns.lineRange(for: NSRange(location: range.location, length: 0))
+        if !raw.contains("\n") && NSMaxRange(range) < NSMaxRange(first) - (ns.substring(with: first).hasSuffix("\n") ? 1 : 0) {
+            return raw
+        }
+        var out: [String] = []
+        var offset = 0
+        for (i, line) in string.components(separatedBy: "\n").enumerated() {
+            let lineRange = NSRange(location: offset, length: (line as NSString).length)
+            offset += lineRange.length + 1
+            let part = NSIntersectionRange(lineRange, range)
+            let touches = part.length > 0 || (lineRange.length == 0 && lineRange.location >= range.location
+                                                  && lineRange.location < NSMaxRange(range))
+            guard touches else { continue }
+            var text = ns.substring(with: part)
+            if NSMaxRange(part) == NSMaxRange(lineRange), i < results.count, let d = results[i].display {
+                text += " = " + d
+            }
+            out.append(text)
+        }
+        return out.joined(separator: "\n")
+    }
+
+    override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+        let text: String
+        if let raw = pb.string(forType: Self.rawType) {
+            text = raw
+        } else if let s = pb.string(forType: .string) {
+            let ns = string as NSString
+            let lineStart = ns.lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
+            text = cleanPaste?(s, ns.substring(to: lineStart).trimmingCharacters(in: .newlines)) ?? s
+        } else {
+            return super.paste(sender)
+        }
+        insertText(text, replacementRange: selectedRange())
+    }
+
     // MARK: Click to copy
 
     private func slot(at event: NSEvent) -> Slot? {
@@ -273,6 +339,9 @@ struct EditorView: NSViewRepresentable {
         tv.drawsBackground = true
         tv.delegate = context.coordinator
         tv.copyText = { [weak library] line in MainActor.assumeIsolated { library?.copyText(line: line) } }
+        tv.cleanPaste = { [weak library] text, context in
+            MainActor.assumeIsolated { library?.cleanPaste(text, context: context) ?? text }
+        }
         tv.string = library.text
         tv.style = style
         tv.applyStyle()

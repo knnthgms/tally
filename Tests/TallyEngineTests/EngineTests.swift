@@ -204,3 +204,66 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(e.formatter.format(v), "$1,234.50")
     }
 }
+
+final class PasteTests: XCTestCase {
+    let numiCopy = """
+    # credit cards
+    coral = 3542.87inr = INR 3,542.87
+    regalia = 81026inr = INR 81,026
+
+    debt = coral + regalia = INR 84,568.87
+
+    # bank balance
+    fi = 58034 inr = INR 58,034
+
+    iminbal = 10000inr = INR 10,000
+    icici = 72565.21 inr - iminbal = INR 62,565.21
+
+    balance = fi + icici = INR 1,20,599.21
+
+    # Bills
+    rent = 49500inr = INR 49,500
+    esops = 45000inr = INR 45,000
+    emi = 58000inr = INR 58,000
+    sips = 45000inr = INR 45,000
+    help = 5800inr = INR 5,800
+
+    bills = rent + esops + emi + sips + help = INR 2,03,300
+
+    sal = 214000inr = INR 2,14,000
+
+    settle = balance - debt - bills + sal = INR 46,730.34
+
+    targetfi = 50000inr = INR 50,000
+    targeticici = 45000inr - iminbal = INR 35,000
+
+    targetBal = targetfi + targeticici = INR 85,000
+
+    targetBal - settle = INR 38,269.66
+    """
+
+    func testStripsNumiResultsButKeepsAssignments() {
+        let e = Engine(rates: .fallback)
+        let clean = e.stripPastedResults(numiCopy)
+        let lines = clean.components(separatedBy: "\n")
+        XCTAssertEqual(lines[1], "coral = 3542.87inr")
+        XCTAssertEqual(lines[4], "debt = coral + regalia")
+        XCTAssertEqual(lines[10], "icici = 72565.21 inr - iminbal")
+        XCTAssertEqual(lines.last, "targetBal - settle")
+        XCTAssertFalse(clean.contains("INR"))
+        // The cleaned document still calculates to Numi's answer.
+        e.formatter.settings.indianGrouping = true
+        XCTAssertEqual(e.evaluate(clean).last?.display, "₹38,269.66")
+        XCTAssertEqual(e.evaluate(clean)[12].display, "₹1,20,599.21")
+    }
+
+    func testLeavesPlainAssignmentsAndMismatchesAlone() {
+        let e = Engine(rates: .fallback)
+        XCTAssertEqual(e.stripPastedResults("rent = 49500"), "rent = 49500")
+        XCTAssertEqual(e.stripPastedResults("a = 5\na = 7"), "a = 5\na = 7")
+        XCTAssertEqual(e.stripPastedResults("2 + 2 = 5"), "2 + 2 = 5")
+        XCTAssertEqual(e.stripPastedResults("2 + 2 = 4"), "2 + 2")
+        XCTAssertEqual(e.stripPastedResults("255 in hex = 0xFF"), "255 in hex")
+        XCTAssertEqual(e.stripPastedResults("x - 3 = -$1", context: "x = $2"), "x - 3")
+    }
+}

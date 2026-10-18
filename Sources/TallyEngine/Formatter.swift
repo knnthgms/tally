@@ -4,6 +4,8 @@ public struct FormatSettings: Sendable, Equatable {
     /// Decimal places for ordinary numbers (small numbers always keep two significant digits).
     public var decimals: Int = 2
     public var grouping: Bool = true
+    /// Indian (lakh/crore) grouping: 12,34,567 instead of 1,234,567.
+    public var indianGrouping: Bool = false
     public var use24Hour: Bool = false
     public init() {}
 }
@@ -111,6 +113,8 @@ public final class ResultFormatter: @unchecked Sendable {
         f.numberStyle = .decimal
         f.usesGroupingSeparator = settings.grouping
         f.groupingSeparator = ","
+        f.groupingSize = 3
+        f.secondaryGroupingSize = settings.indianGrouping ? 2 : 3
         f.decimalSeparator = "."
         f.maximumFractionDigits = decimals
         f.minimumFractionDigits = minDecimals
