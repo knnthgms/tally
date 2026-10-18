@@ -4,8 +4,16 @@ import TallyEngine
 
 /// Plain-text editor that draws each line's result right-aligned in a column, Numi-style.
 final class CalcTextView: NSTextView {
-    var results: [LineResult] = [] {
-        didSet { applyHighlighting(); refreshOverlay() }
+    private(set) var results: [LineResult] = []
+    private var resultsVersion = -1
+
+    /// Applies new results once per evaluation (both the typing path and SwiftUI updates call this).
+    func setResults(_ r: [LineResult], version: Int) {
+        guard version != resultsVersion else { return }
+        resultsVersion = version
+        results = r
+        applyHighlighting()
+        refreshOverlay()
     }
     var style = EditorStyle(theme: .system, fontID: "system", fontSize: 15, lineSpacing: 5, resultFraction: 0.4,
                             highlightLine: true) {
@@ -268,7 +276,7 @@ struct EditorView: NSViewRepresentable {
         tv.string = library.text
         tv.style = style
         tv.applyStyle()
-        tv.results = library.results
+        tv.setResults(library.results, version: library.resultsVersion)
         context.coordinator.generation = library.loadGeneration
 
         let scroll = NSScrollView()
@@ -297,16 +305,9 @@ struct EditorView: NSViewRepresentable {
                 tv.undoManager?.removeAllActions()
                 tv.setSelectedRange(NSRange(location: 0, length: 0))
                 tv.scrollToBeginningOfDocument(nil)
-                // Soft fade when switching calculations.
-                scroll.alphaValue = 0.25
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.18
-                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                    scroll.animator().alphaValue = 1
-                }
             }
         }
-        tv.results = library.results
+        tv.setResults(library.results, version: library.resultsVersion)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -320,7 +321,7 @@ struct EditorView: NSViewRepresentable {
             MainActor.assumeIsolated {
                 library.edit(tv.string)
                 // Push results straight to the view rather than waiting for SwiftUI to schedule an update.
-                tv.results = library.results
+                tv.setResults(library.results, version: library.resultsVersion)
             }
         }
 

@@ -10,7 +10,6 @@ struct ContentView: View {
     @AppStorage("resultFraction") private var resultFraction = 0.4
     @AppStorage("highlightLine") private var highlightLine = true
     @AppStorage("showSidebar") private var showSidebar = true
-    @AppStorage("sidebarWidth") private var sidebarWidth = 200.0
     @AppStorage("showTitle") private var showTitle = true
     @AppStorage("showTotal") private var showTotal = true
     @AppStorage("alwaysOnTop") private var alwaysOnTop = false
@@ -20,9 +19,7 @@ struct ContentView: View {
     @State private var draft = ""
     @State private var trashing: CalcFile?
     @State private var copiedTotal = false
-    @State private var dragStartWidth: Double?
     @FocusState private var renameFocused: Bool
-    @Namespace private var selectionNS
 
     private var theme: Theme { Theme.named(themeID) }
     private var z: CGFloat { CGFloat(zoom) }
@@ -32,37 +29,36 @@ struct ContentView: View {
                     resultFraction: resultFraction, highlightLine: highlightLine)
     }
 
-    private static let sidebarSpring = Animation.spring(response: 0.32, dampingFraction: 0.86)
+    /// The native split view owns the collapse animation; this just maps it onto the saved setting.
+    private var columnVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding(get: { showSidebar ? .all : .detailOnly },
+                set: { showSidebar = $0 != .detailOnly })
+    }
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView(columnVisibility: columnVisibility) {
             sidebar
-                .frame(width: sidebarWidth * z)
-                .frame(width: showSidebar ? sidebarWidth * z : 0, alignment: .trailing)
-                .clipped()
-                .overlay(alignment: .trailing) { if showSidebar { resizeHandle } }
+                .navigationSplitViewColumnWidth(min: 150, ideal: 200, max: 340)
+        } detail: {
             VStack(spacing: 0) {
                 if library.selection != nil {
                     EditorView(library: library, style: style)
-                        .padding(.top, 38)
                 } else {
                     emptyState
                 }
-                if showTotal { footer.transition(.move(edge: .bottom).combined(with: .opacity)) }
+                if showTotal { footer }
             }
-            .background(theme.background.swiftUI)
+            .background(theme.background.swiftUI.ignoresSafeArea())
+            .toolbar { toolbarContent }
         }
-        .ignoresSafeArea()
-        .background(theme.background.swiftUI)
-        .toolbar { toolbarContent }
+        .navigationSplitViewStyle(.balanced)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .background(WindowConfigurator(theme: theme, alwaysOnTop: alwaysOnTop))
         .preferredColorScheme(theme.isDark.map { $0 ? .dark : .light })
-        .animation(.snappy(duration: 0.25), value: showTotal)
         .confirmationDialog("Move “\(trashing?.name ?? "")” to the Trash?",
                             isPresented: Binding(get: { trashing != nil }, set: { if !$0 { trashing = nil } })) {
             Button("Move to Trash", role: .destructive) {
-                if let f = trashing { withAnimation(.snappy) { library.trash(f.url) } }
+                if let f = trashing { withAnimation(.easeOut(duration: 0.15)) { library.trash(f.url) } }
                 trashing = nil
             }
         } message: {
@@ -72,7 +68,6 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .renameCurrent)) { _ in
             if let url = library.selection { startRename(url) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in toggleSidebar() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             library.reloadList()
             library.reloadIfChangedOnDisk()
@@ -83,17 +78,11 @@ struct ContentView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button(action: toggleSidebar) { Label("Sidebar", systemImage: "sidebar.left") }
-                .help("Show or hide the sidebar (⌃⌘S)")
-        }
         ToolbarItem(placement: .principal) {
             if showTitle {
                 Text(currentName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.secondary.swiftUI)
-                    .contentTransition(.opacity)
-                    .animation(.easeInOut(duration: 0.15), value: currentName)
             }
         }
         ToolbarItem(placement: .primaryAction) {
@@ -106,45 +95,31 @@ struct ContentView: View {
         library.files.first { $0.url == library.selection }?.name ?? "Tally"
     }
 
-    private func toggleSidebar() {
-        withAnimation(Self.sidebarSpring) { showSidebar.toggle() }
-    }
-
     // MARK: Sidebar
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: 44)
             ScrollView {
                 VStack(spacing: 2 * z) {
                     ForEach(library.files) { file in
-                        row(file)
-                            .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity),
-                                                    removal: .opacity.combined(with: .scale(scale: 0.95))))
+                        row(file).transition(.opacity)
                     }
                 }
                 .padding(.horizontal, 8)
-                .animation(.snappy(duration: 0.28), value: library.files)
-                .animation(.snappy(duration: 0.22), value: library.selection)
+                .padding(.top, 44)
             }
             .scrollIndicators(.never)
+            .ignoresSafeArea(.container, edges: .top)
             sidebarFooter
         }
-        .background(theme.sidebar.swiftUI)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(theme.text.swiftUI.opacity(0.08)).frame(width: 1)
-        }
+        // System theme keeps the native translucent sidebar; other themes paint their own colour.
+        .background { if theme.id != "system" { theme.sidebar.swiftUI.ignoresSafeArea() } }
     }
 
     @ViewBuilder
     private func row(_ file: CalcFile) -> some View {
         let selected = file.url == library.selection
-        ZStack(alignment: .leading) {
-            if selected {
-                RoundedRectangle(cornerRadius: 6 * z)
-                    .fill(theme.selection.swiftUI)
-                    .matchedGeometryEffect(id: "selection", in: selectionNS)
-            }
+        Group {
             if editing == file.url {
                 TextField("Name", text: $draft)
                     .textFieldStyle(.plain)
@@ -155,6 +130,8 @@ struct ContentView: View {
                     .onChange(of: renameFocused) { _, focused in if !focused { commitRename() } }
                     .onExitCommand { editing = nil; focusEditor() }
                     .padding(.horizontal, 10 * z)
+                    .frame(maxHeight: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 6 * z).fill(theme.selection.swiftUI))
             } else {
                 FileRowLabel(name: file.name, selected: selected, theme: theme, zoom: z)
             }
@@ -165,7 +142,7 @@ struct ContentView: View {
         .onTapGesture { if editing != file.url { library.select(file.url) } }
         .contextMenu {
             Button("Rename") { startRename(file.url) }
-            Button("Duplicate") { withAnimation(.snappy) { library.duplicate(file.url) } }
+            Button("Duplicate") { library.duplicate(file.url) }
             Button("Show in Finder") { library.reveal(file.url) }
             Divider()
             Button("Move to Trash…", role: .destructive) { trashing = file }
@@ -174,7 +151,6 @@ struct ContentView: View {
 
     private var sidebarFooter: some View {
         HStack(spacing: 2) {
-            IconButton(symbol: "plus", color: theme.secondary.swiftUI, zoom: z, help: "New calculation (⌘N)", action: createFile)
             IconButton(symbol: "folder", color: theme.secondary.swiftUI, zoom: z, help: "Open the Tally folder in Finder") {
                 library.reveal(nil)
             }
@@ -193,29 +169,12 @@ struct ContentView: View {
         .frame(height: 34 * z)
     }
 
-    private var resizeHandle: some View {
-        Color.clear
-            .frame(width: 8)
-            .contentShape(Rectangle())
-            .pointerStyle(.columnResize)
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { g in
-                        let start = dragStartWidth ?? sidebarWidth
-                        if dragStartWidth == nil { dragStartWidth = sidebarWidth }
-                        sidebarWidth = min(360, max(150, start + g.translation.width / z))
-                    }
-                    .onEnded { _ in dragStartWidth = nil }
-            )
-            .offset(x: 4)
-    }
-
     // MARK: Files
 
     private func createFile() {
-        if !showSidebar { withAnimation(Self.sidebarSpring) { showSidebar = true } }
+        if !showSidebar { showSidebar = true }
         var url: URL?
-        withAnimation(.snappy(duration: 0.28)) { url = library.newFile() }
+        withAnimation(.easeOut(duration: 0.15)) { url = library.newFile() }
         if let url { startRename(url) }
     }
 
@@ -228,7 +187,7 @@ struct ContentView: View {
     private func commitRename() {
         guard let url = editing else { return }
         editing = nil
-        withAnimation(.snappy) { library.rename(url, to: draft) }
+        library.rename(url, to: draft)
         focusEditor()
     }
 
@@ -260,23 +219,18 @@ struct ContentView: View {
             if let err = library.currentLineError {
                 Image(systemName: "exclamationmark.circle").foregroundStyle(theme.variable.swiftUI)
                 Text(err).foregroundStyle(theme.secondary.swiftUI).lineLimit(1).truncationMode(.tail)
-                    .transition(.opacity)
             }
             Spacer()
             if let total = library.total {
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(total, forType: .string)
-                    withAnimation(.snappy(duration: 0.18)) { copiedTotal = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                        withAnimation(.easeOut(duration: 0.25)) { copiedTotal = false }
-                    }
+                    copiedTotal = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { copiedTotal = false }
                 } label: {
                     HStack(spacing: 6 * z) {
                         Text(copiedTotal ? "Copied" : "Total").foregroundStyle(theme.secondary.swiftUI)
-                            .contentTransition(.opacity)
                         Text(total).foregroundStyle(theme.result.swiftUI).monospacedDigit()
-                            .contentTransition(.numericText())
                     }
                 }
                 .buttonStyle(.plain)
@@ -284,8 +238,6 @@ struct ContentView: View {
             }
         }
         .font(.system(size: 12 * z))
-        .animation(.snappy(duration: 0.25), value: library.total)
-        .animation(.easeInOut(duration: 0.15), value: library.currentLineError)
         .padding(.horizontal, 22 * z)
         .frame(height: 30 * z)
         .background(theme.text.swiftUI.opacity(0.03))
@@ -309,9 +261,9 @@ struct FileRowLabel: View {
             .padding(.horizontal, 10 * zoom)
             .background(
                 RoundedRectangle(cornerRadius: 6 * zoom)
-                    .fill(theme.text.swiftUI.opacity(hover && !selected ? 0.05 : 0))
+                    .fill(selected ? theme.selection.swiftUI : theme.text.swiftUI.opacity(hover ? 0.05 : 0))
             )
-            .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+            .onHover { hover = $0 }
     }
 }
 
@@ -333,7 +285,7 @@ struct IconButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+        .onHover { hover = $0 }
         .help(help)
     }
 }
@@ -348,9 +300,6 @@ struct WindowConfigurator: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let w = view.window else { return }
-            w.titlebarAppearsTransparent = true
-            w.titleVisibility = .hidden
-            w.styleMask.insert(.fullSizeContentView)
             w.titlebarSeparatorStyle = .none
             w.appearance = theme.appearance
             w.backgroundColor = theme.background
@@ -361,6 +310,5 @@ struct WindowConfigurator: NSViewRepresentable {
 
 extension Notification.Name {
     static let renameCurrent = Notification.Name("TallyRenameCurrent")
-    static let toggleSidebar = Notification.Name("TallyToggleSidebar")
     static let newCalculation = Notification.Name("TallyNewCalculation")
 }

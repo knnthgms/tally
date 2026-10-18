@@ -18,6 +18,8 @@ final class Library {
     private(set) var selection: URL?
     private(set) var text = ""
     private(set) var results: [LineResult] = []
+    /// Bumped on every evaluation so the editor can skip redundant recolouring.
+    private(set) var resultsVersion = 0
     private(set) var total: String?
     private(set) var ratesUpdated: Date?
     var cursorLine = 0
@@ -170,6 +172,7 @@ final class Library {
     func select(_ url: URL?) {
         guard url != selection || url == nil else { return }
         saveNow()
+        discardIfUntouched(selection, unless: url)
         selection = url
         let content = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         text = content
@@ -195,6 +198,7 @@ final class Library {
 
     func evaluate() {
         results = engine.evaluate(text)
+        resultsVersion += 1
         total = engine.total(results).map { engine.formatter.format($0) }
     }
 
@@ -229,10 +233,23 @@ final class Library {
         }
     }
 
+    /// Files made with New Calculation this session; if left empty they are discarded on leaving, like Notes.
+    @ObservationIgnored private var freshFiles: Set<URL> = []
+
+    private func discardIfUntouched(_ url: URL?, unless next: URL?) {
+        guard let url, url != next, freshFiles.contains(url),
+              let content = try? String(contentsOf: url, encoding: .utf8),
+              content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        freshFiles.remove(url)
+        try? FileManager.default.removeItem(at: url)
+        files.removeAll { $0.url == url }
+    }
+
     @discardableResult
     func newFile(named base: String = "Untitled", content: String = "") -> URL {
         let url = uniqueURL(base)
         try? content.write(to: url, atomically: true, encoding: .utf8)
+        if content.isEmpty { freshFiles.insert(url) }
         reloadList()
         select(url)
         return url
@@ -250,6 +267,7 @@ final class Library {
         saveNow()
         let dest = folder.appendingPathComponent("\(clean).\(Self.fileExtension)").standardizedFileURL
         guard dest != url else { return }
+        freshFiles.remove(url)
         do {
             try FileManager.default.moveItem(at: url, to: dest)
             let wasSelected = selection == url

@@ -39,9 +39,8 @@ struct TallyApp: App {
                 Button("Copy All with Results") { library.copyAllWithResults() }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
             }
-            CommandGroup(replacing: .sidebar) {
-                Button("Toggle Sidebar") { NotificationCenter.default.post(name: .toggleSidebar, object: nil) }
-                    .keyboardShortcut("s", modifiers: [.command, .control])
+            SidebarCommands()
+            CommandGroup(after: .sidebar) {
                 Divider()
                 Button("Zoom In") { Zoom.step(1) }.keyboardShortcut("+")
                 Button("Zoom Out") { Zoom.step(-1) }.keyboardShortcut("-")
