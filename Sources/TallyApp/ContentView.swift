@@ -14,6 +14,7 @@ struct ContentView: View {
     @AppStorage("showTotal") private var showTotal = true
     @AppStorage("alwaysOnTop") private var alwaysOnTop = false
     @AppStorage("zoom") private var zoom = 1.0
+    @AppStorage("layout") private var layout = "tabs"
 
     @State private var editing: URL?
     @State private var draft = ""
@@ -37,23 +38,9 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $visibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 150, ideal: 200, max: 340)
-        } detail: {
-            VStack(spacing: 0) {
-                if library.selection != nil {
-                    EditorView(library: library, style: style)
-                } else {
-                    emptyState
-                }
-                if showTotal { FooterView(library: library, theme: theme, zoom: z) }
-            }
-            .background(theme.background.swiftUI.ignoresSafeArea())
-            .toolbar { toolbarContent }
+        Group {
+            if layout == "tabs" { tabLayout } else { splitLayout }
         }
-        .navigationSplitViewStyle(.balanced)
-        .toolbarBackground(.hidden, for: .windowToolbar)
         .background(WindowConfigurator(theme: theme, alwaysOnTop: alwaysOnTop))
         .preferredColorScheme(theme.isDark.map { $0 ? .dark : .light })
         .confirmationDialog("Move “\(trashing?.name ?? "")” to the Trash?",
@@ -75,12 +62,56 @@ struct ContentView: View {
             if visibility != v { withAnimation { visibility = v } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .newCalculation)) { _ in createFile() }
+        .onReceive(NotificationCenter.default.publisher(for: .closeTab)) { _ in library.closeTab(library.selection) }
         .onReceive(NotificationCenter.default.publisher(for: .renameCurrent)) { _ in
             if let url = library.selection { startRename(url) }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             library.reloadList()
             library.reloadIfChangedOnDisk()
+        }
+    }
+
+    // MARK: Layouts
+
+    /// Tabs in the title bar row (Sublime/Chrome style), one shared editor below.
+    private var tabLayout: some View {
+        VStack(spacing: 0) {
+            TabBar(library: library, theme: theme, editing: $editing, draft: $draft, renameFocused: $renameFocused,
+                   onNew: createFile, onRename: startRename, onCommitRename: commitRename,
+                   onTrash: { trashing = $0 })
+            editorArea
+        }
+        .background(theme.background.swiftUI)
+        .ignoresSafeArea(.container, edges: .top)
+        // Keep the native compact title bar (38pt, traffic lights centred) with an invisible item,
+        // so the tab strip shares its row and lines up with the lights.
+        .toolbar { ToolbarItem(placement: .automatic) { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) } }
+        .toolbarBackground(.hidden, for: .windowToolbar)
+    }
+
+    /// Native split view with the file list as a sidebar.
+    private var splitLayout: some View {
+        NavigationSplitView(columnVisibility: $visibility) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 150, ideal: 200, max: 340)
+        } detail: {
+            editorArea
+                .background(theme.background.swiftUI.ignoresSafeArea())
+                .toolbar { toolbarContent }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .toolbarBackground(.hidden, for: .windowToolbar)
+    }
+
+    private var editorArea: some View {
+        VStack(spacing: 0) {
+            if library.selection != nil {
+                EditorView(library: library, style: style)
+            } else {
+                emptyState
+            }
+            if showTotal { FooterView(library: library, theme: theme, zoom: z) }
         }
     }
 
@@ -182,7 +213,7 @@ struct ContentView: View {
     // MARK: Files
 
     private func createFile() {
-        if visibility == .detailOnly { withAnimation { visibility = .all } }
+        if layout != "tabs", visibility == .detailOnly { withAnimation { visibility = .all } }
         var url: URL?
         withAnimation(.easeOut(duration: 0.15)) { url = library.newFile() }
         if let url { startRename(url) }
@@ -337,4 +368,5 @@ struct WindowConfigurator: NSViewRepresentable {
 extension Notification.Name {
     static let renameCurrent = Notification.Name("TallyRenameCurrent")
     static let newCalculation = Notification.Name("TallyNewCalculation")
+    static let closeTab = Notification.Name("TallyCloseTab")
 }

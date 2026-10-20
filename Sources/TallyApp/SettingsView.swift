@@ -301,12 +301,25 @@ private struct WindowSettings: View {
     @AppStorage("showTotal") private var showTotal = true
     @AppStorage("showSidebar") private var showSidebar = true
     @AppStorage("alwaysOnTop") private var alwaysOnTop = false
+    @AppStorage("layout") private var layout = "tabs"
 
     var body: some View {
         SettingsPage {
+            SettingsGroup(title: "Calculations") {
+                Row(label: "Show calculations as",
+                    caption: layout == "tabs" ? "Tabs across the top, like Sublime Text" : "A list down the side", divider: false) {
+                    Picker("", selection: $layout) {
+                        Label("Tabs", systemImage: "rectangle.topthird.inset.filled").tag("tabs")
+                        Label("Sidebar", systemImage: "sidebar.left").tag("sidebar")
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                }
+            }
             SettingsGroup(title: "Window") {
-                Row(label: "Show file name in title bar") { Toggle("", isOn: $showTitle).toggleStyle(.switch).labelsHidden() }
-                Row(label: "Show sidebar", caption: "⌃⌘S") { Toggle("", isOn: $showSidebar).toggleStyle(.switch).labelsHidden() }
+                if layout == "sidebar" {
+                    Row(label: "Show file name in title bar") { Toggle("", isOn: $showTitle).toggleStyle(.switch).labelsHidden() }
+                    Row(label: "Show sidebar", caption: "⌃⌘S") { Toggle("", isOn: $showSidebar).toggleStyle(.switch).labelsHidden() }
+                }
                 Row(label: "Show total bar", divider: false) { Toggle("", isOn: $showTotal).toggleStyle(.switch).labelsHidden() }
             }
             SettingsGroup(title: "Behaviour") {

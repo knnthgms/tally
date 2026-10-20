@@ -17,6 +17,13 @@ struct TallyApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Calculation") { NotificationCenter.default.post(name: .newCalculation, object: nil) }
                     .keyboardShortcut("n")
+                Button("New Tab") { NotificationCenter.default.post(name: .newCalculation, object: nil) }
+                    .keyboardShortcut("t")
+                Button("Close Tab") { NotificationCenter.default.post(name: .closeTab, object: nil) }
+                    .keyboardShortcut("w")
+                    .disabled(library.selection == nil)
+                Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
+                    .keyboardShortcut("w", modifiers: [.command, .shift])
                 Button("Rename…") { NotificationCenter.default.post(name: .renameCurrent, object: nil) }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(library.selection == nil)
@@ -58,10 +65,20 @@ struct TallyApp: App {
                 Button("Zoom Out") { Zoom.step(-1) }.keyboardShortcut("-")
                 Button("Actual Size") { Zoom.reset() }.keyboardShortcut("0")
                 Divider()
+                Button("Show Previous Tab") { library.selectAdjacent(-1) }
+                    .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                Button("Show Next Tab") { library.selectAdjacent(1) }
+                    .keyboardShortcut(.tab, modifiers: .control)
                 Button("Previous Calculation") { library.selectAdjacent(-1) }
-                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                    .keyboardShortcut("[", modifiers: [.command, .shift])
                 Button("Next Calculation") { library.selectAdjacent(1) }
-                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                    .keyboardShortcut("]", modifiers: [.command, .shift])
+                Menu("Go to Tab") {
+                    ForEach(1...9, id: \.self) { n in
+                        Button(n == 9 ? "Last Tab" : "Tab \(n)") { library.selectTab(number: n) }
+                            .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
+                    }
+                }
                 Divider()
             }
             CommandMenu("Rates") {

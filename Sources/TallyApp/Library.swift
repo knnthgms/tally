@@ -16,6 +16,8 @@ final class Library {
     private(set) var folder: URL
     private(set) var files: [CalcFile] = []
     private(set) var selection: URL?
+    /// Files open as tabs, in tab order. Closing a tab never touches the file.
+    private(set) var openTabs: [URL] = []
     private(set) var text = ""
     private(set) var results: [LineResult] = []
     /// Bumped on every evaluation so the editor can skip redundant recolouring.
@@ -108,8 +110,9 @@ final class Library {
             try? Self.welcome.write(to: url, atomically: true, encoding: .utf8)
             reloadList()
         }
+        restoreTabs()
         let last = UserDefaults.standard.string(forKey: "lastFile").map { URL(fileURLWithPath: $0) }
-        select(files.first { $0.url == last }?.url ?? files.first?.url)
+        select(openTabs.first { $0 == last } ?? openTabs.first ?? files.first?.url)
         watch()
     }
 
@@ -119,9 +122,14 @@ final class Library {
         files = urls.filter { $0.pathExtension.lowercased() == Self.fileExtension }
             .map { CalcFile(url: $0.standardizedFileURL) }
             .sorted(by: Self.sortOrder)
-        if let s = selection, !files.contains(where: { $0.url == s }) {
+        let existing = Set(files.map(\.url))
+        if openTabs.contains(where: { !existing.contains($0) }) {
+            openTabs.removeAll { !existing.contains($0) }
+            saveTabs()
+        }
+        if let s = selection, !existing.contains(s) {
             selection = nil
-            select(files.first?.url)
+            select(openTabs.first ?? files.first?.url)
         }
     }
 
@@ -174,6 +182,12 @@ final class Library {
         guard url != selection || url == nil else { return }
         saveNow()
         discardIfUntouched(selection, unless: url)
+        if let url, !openTabs.contains(url) {
+            // New tabs open to the right of the current one.
+            let at = selection.flatMap { openTabs.firstIndex(of: $0) }.map { $0 + 1 } ?? openTabs.count
+            openTabs.insert(url, at: min(at, openTabs.count))
+            saveTabs()
+        }
         selection = url
         let content = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         text = content
@@ -184,10 +198,59 @@ final class Library {
     }
 
     /// Moves the selection up or down the sidebar list.
+    /// Next/previous tab in tab layout, next/previous file in the sidebar layout.
     func selectAdjacent(_ offset: Int) {
-        guard !files.isEmpty else { return }
-        let i = files.firstIndex { $0.url == selection } ?? 0
-        select(files[(i + offset + files.count) % files.count].url)
+        let list = usesTabs ? openTabs : files.map(\.url)
+        guard !list.isEmpty else { return }
+        let i = list.firstIndex { $0 == selection } ?? 0
+        select(list[(i + offset + list.count) % list.count])
+    }
+
+    // MARK: Tabs
+
+    var usesTabs: Bool { (UserDefaults.standard.string(forKey: "layout") ?? "tabs") == "tabs" }
+
+    private func restoreTabs() {
+        let existing = Set(files.map(\.url))
+        if let saved = UserDefaults.standard.stringArray(forKey: "openTabs") {
+            openTabs = saved.map { URL(fileURLWithPath: $0).standardizedFileURL }.filter { existing.contains($0) }
+        } else {
+            openTabs = files.map(\.url) // first launch with tabs: open everything
+        }
+    }
+
+    private func saveTabs() {
+        UserDefaults.standard.set(openTabs.map(\.path), forKey: "openTabs")
+    }
+
+    /// ⌘1–⌘8 pick that tab; ⌘9 picks the last, like Safari and Sublime.
+    func selectTab(number n: Int) {
+        guard !openTabs.isEmpty else { return }
+        select(n == 9 ? openTabs.last : openTabs[safe: n - 1])
+    }
+
+    func closeTab(_ url: URL?) {
+        guard let url, let i = openTabs.firstIndex(of: url) else { return }
+        if selection == url {
+            let neighbour = openTabs.indices.contains(i + 1) ? openTabs[i + 1] : (i > 0 ? openTabs[i - 1] : nil)
+            select(neighbour)
+        }
+        openTabs.removeAll { $0 == url }
+        saveTabs()
+    }
+
+    func closeOtherTabs(_ url: URL) {
+        openTabs = openTabs.filter { $0 == url }
+        saveTabs()
+        select(url)
+    }
+
+    /// Moves `url` to sit where `target` is (drag-to-reorder).
+    func moveTab(_ url: URL, to target: URL) {
+        guard url != target, let from = openTabs.firstIndex(of: url), let to = openTabs.firstIndex(of: target) else { return }
+        openTabs.remove(at: from)
+        openTabs.insert(url, at: to)
+        saveTabs()
     }
 
     func edit(_ newText: String) {
@@ -244,6 +307,8 @@ final class Library {
         freshFiles.remove(url)
         try? FileManager.default.removeItem(at: url)
         files.removeAll { $0.url == url }
+        openTabs.removeAll { $0 == url }
+        saveTabs()
     }
 
     @discardableResult
@@ -273,6 +338,8 @@ final class Library {
             try FileManager.default.moveItem(at: url, to: dest)
             let wasSelected = selection == url
             if wasSelected { selection = dest; UserDefaults.standard.set(dest.path, forKey: "lastFile") }
+            openTabs = openTabs.map { $0 == url ? dest : $0 }
+            saveTabs()
             reloadList()
         } catch {
             NSAlert(error: error).runModal()
@@ -378,4 +445,8 @@ final class Library {
     sqrt(16) + 2^10
     255 in hex
     """
+}
+
+extension Array {
+    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
