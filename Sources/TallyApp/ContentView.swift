@@ -121,11 +121,12 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            if showTitle {
-                Text(currentName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.secondary.swiftUI)
-            }
+            // Always present (just invisible when off) so the toolbar layout — and the + button — never moves.
+            Text(currentName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(theme.secondary.swiftUI)
+                .opacity(showTitle ? 1 : 0)
+                .accessibilityHidden(!showTitle)
         }
         ToolbarItem(placement: .primaryAction) {
             Button(action: createFile) { Label("New Calculation", systemImage: "square.and.pencil") }
