@@ -52,11 +52,14 @@ final class CalcTextView: NSTextView {
         }
         applyHighlighting()
         refreshOverlay()
+        currentLineRect = nil
+        needsDisplay = true
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         overlay.frame = bounds
+        currentLineRect = nil
         // Results are right-aligned, so they must be redrawn (not stretched or shifted) on every frame
         // of a resize or sidebar animation.
         overlay.needsDisplay = true
@@ -66,6 +69,7 @@ final class CalcTextView: NSTextView {
         cachedLines = nil
         super.didChangeText()
         refreshOverlay()
+        refreshCurrentLine()
     }
 
     override var string: String {
@@ -93,7 +97,54 @@ final class CalcTextView: NSTextView {
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
-        if style.highlightLine { overlay.needsDisplay = true }
+        refreshCurrentLine()
+    }
+
+    // MARK: Current line
+
+    /// Last band drawn, so moving the cursor only repaints the old and new lines.
+    private var currentLineRect: NSRect?
+
+    /// The full-width band of the line holding the cursor, in view coordinates.
+    private func currentLineBand() -> NSRect? {
+        guard style.highlightLine, let lm = layoutManager, window?.firstResponder === self,
+              selectedRange().length == 0 else { return nil }
+        let ns = string as NSString
+        let loc = min(selectedRange().location, ns.length)
+        var rect: NSRect
+        if loc == ns.length, loc == 0 || ns.character(at: loc - 1) == 10 {
+            rect = lm.extraLineFragmentRect
+        } else {
+            rect = lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: min(loc, ns.length - 1)), effectiveRange: nil)
+        }
+        guard rect.height > 0 else { return nil }
+        return NSRect(x: 0, y: rect.minY + textContainerOrigin.y, width: bounds.width, height: rect.height)
+    }
+
+    private func refreshCurrentLine() {
+        let band = currentLineBand()
+        guard band != currentLineRect else { return }
+        if let old = currentLineRect { setNeedsDisplay(old) }
+        if let band { setNeedsDisplay(band) }
+        currentLineRect = band
+    }
+
+    /// Draws under the glyphs (the hook CotEditor uses), so the highlight never tints the text.
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let band = currentLineBand(), band.intersects(rect) else { return }
+        style.theme.text.withAlphaComponent(0.05).setFill()
+        band.intersection(rect).fill()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        defer { refreshCurrentLine() }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        defer { refreshCurrentLine() }
+        return super.resignFirstResponder()
     }
 
     private func refreshOverlay() {
@@ -110,8 +161,8 @@ final class CalcTextView: NSTextView {
         guard let lm = layoutManager, let tc = textContainer else { return [] }
         var visible = visibleRect
         visible.origin.y -= textContainerOrigin.y
-        var glyphsOnScreen = lm.glyphRange(forBoundingRectWithoutAdditionalLayout: visible, in: tc)
-        if glyphsOnScreen.length == 0 { glyphsOnScreen = lm.glyphRange(forBoundingRect: visible, in: tc) }
+        // Lays out just the visible rect if needed (cheap with non-contiguous layout).
+        let glyphsOnScreen = lm.glyphRange(forBoundingRect: visible, in: tc)
         let charsOnScreen = lm.characterRange(forGlyphRange: glyphsOnScreen, actualGlyphRange: nil)
         let lines = lineRanges
         // First line that ends at or after the visible range (binary search).
@@ -155,22 +206,6 @@ final class CalcTextView: NSTextView {
 
     func drawResults(_ dirtyRect: NSRect) {
         let t = style.theme
-        if style.highlightLine, let lm = layoutManager, window?.firstResponder === self {
-            // Soft band behind the line holding the cursor.
-            let loc = min(selectedRange().location, (string as NSString).length)
-            var rect: NSRect
-            if loc == (string as NSString).length, loc == 0 || (string as NSString).character(at: loc - 1) == 10 {
-                rect = lm.extraLineFragmentRect
-            } else {
-                let idx = lm.glyphIndexForCharacter(at: max(0, min(loc, (string as NSString).length - 1)))
-                rect = lm.lineFragmentRect(forGlyphAt: idx, effectiveRange: nil)
-            }
-            if rect.height > 0 {
-                rect.origin.y += textContainerOrigin.y
-                t.text.withAlphaComponent(0.045).setFill()
-                NSRect(x: 0, y: rect.minY, width: bounds.width, height: rect.height).fill()
-            }
-        }
         let para = NSMutableParagraphStyle()
         para.alignment = .right
         para.lineBreakMode = .byTruncatingHead
@@ -345,6 +380,8 @@ struct EditorView: NSViewRepresentable {
         let storage = NSTextStorage()
         let lm = NSLayoutManager()
         storage.addLayoutManager(lm)
+        // Only lay out what's on screen (as CotEditor does), so long calculations open and scroll fast.
+        lm.allowsNonContiguousLayout = true
         // Width follows the text view through normal autoresizing; the container itself keeps text out of
         // the results column, so a resize or sidebar animation is a single AppKit layout pass per frame.
         let container = CalcTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
