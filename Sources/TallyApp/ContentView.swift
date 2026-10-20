@@ -15,6 +15,7 @@ struct ContentView: View {
     @AppStorage("alwaysOnTop") private var alwaysOnTop = false
     @AppStorage("zoom") private var zoom = 1.0
     @AppStorage("layout") private var layout = "tabs"
+    @AppStorage("lineNumbers") private var lineNumbers = true
 
     @State private var editing: URL?
     @State private var draft = ""
@@ -34,7 +35,7 @@ struct ContentView: View {
 
     private var style: EditorStyle {
         EditorStyle(theme: theme, fontID: fontID, fontSize: fontSize * zoom, lineSpacing: lineSpacing * zoom,
-                    resultFraction: resultFraction, highlightLine: highlightLine)
+                    resultFraction: resultFraction, highlightLine: highlightLine, lineNumbers: lineNumbers)
     }
 
     var body: some View {

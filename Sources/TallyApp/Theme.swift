@@ -158,4 +158,5 @@ struct EditorStyle: Equatable {
     var lineSpacing: CGFloat
     var resultFraction: CGFloat
     var highlightLine: Bool
+    var lineNumbers: Bool = true
 }

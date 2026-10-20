@@ -231,6 +231,7 @@ private struct TextSettings: View {
     @AppStorage("lineSpacing") private var lineSpacing = 6.0
     @AppStorage("resultFraction") private var resultFraction = 0.4
     @AppStorage("highlightLine") private var highlightLine = true
+    @AppStorage("lineNumbers") private var lineNumbers = true
     @AppStorage("zoom") private var zoom = 1.0
 
     var body: some View {
@@ -256,6 +257,9 @@ private struct TextSettings: View {
             FontPreview(fontID: fontID, size: fontSize, spacing: lineSpacing, theme: Theme.named(themeID))
             SettingsGroup(title: "Layout", footer: "Zoom the whole window with ⌘+ and ⌘−; ⌘0 resets it. Current zoom: \(Int(zoom * 100))%.") {
                 SliderRow(label: "Results column", value: $resultFraction, range: 0.25...0.6) { "\(Int($0 * 100))%" }
+                Row(label: "Show line numbers") {
+                    Toggle("", isOn: $lineNumbers).toggleStyle(.switch).labelsHidden()
+                }
                 Row(label: "Highlight current line", divider: false) {
                     Toggle("", isOn: $highlightLine).toggleStyle(.switch).labelsHidden()
                 }
@@ -305,9 +309,9 @@ private struct WindowSettings: View {
 
     var body: some View {
         SettingsPage {
-            SettingsGroup(title: "Calculations") {
-                Row(label: "Show calculations as",
-                    caption: layout == "tabs" ? "Tabs across the top, like Sublime Text" : "A list down the side", divider: false) {
+            SettingsGroup(title: "Open documents") {
+                Row(label: "Show open documents as",
+                    caption: layout == "tabs" ? "Tabs across the top, like Sublime Text" : "A list in a sidebar", divider: false) {
                     Picker("", selection: $layout) {
                         Label("Tabs", systemImage: "rectangle.topthird.inset.filled").tag("tabs")
                         Label("Sidebar", systemImage: "sidebar.left").tag("sidebar")

@@ -32,7 +32,8 @@ final class CalcTextView: NSTextView {
     private var copyFade: CGFloat = 0
     private var fadeTimer: Timer?
     private var hoverLine: Int?
-    private var baseFont: NSFont { FontCatalog.font(style.fontID, size: style.fontSize) }
+    var baseFont: NSFont { FontCatalog.font(style.fontID, size: style.fontSize) }
+    weak var lineNumberRuler: LineNumberRuler?
     private var paragraph = NSParagraphStyle()
 
     var resultColumnWidth: CGFloat { CalcTextContainer.columnWidth(bounds.width, style.resultFraction) }
@@ -52,14 +53,14 @@ final class CalcTextView: NSTextView {
         }
         applyHighlighting()
         refreshOverlay()
-        currentLineRect = nil
+        needsUpdateLineHighlight = true
         needsDisplay = true
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         overlay.frame = bounds
-        currentLineRect = nil
+        needsUpdateLineHighlight = true
         // Results are right-aligned, so they must be redrawn (not stretched or shifted) on every frame
         // of a resize or sidebar animation.
         overlay.needsDisplay = true
@@ -80,6 +81,7 @@ final class CalcTextView: NSTextView {
     /// Range of each line (without its newline), computed once per text change instead of on every
     /// draw — the overlay redraws on every frame of a sidebar animation or window resize.
     private var cachedLines: [NSRange]?
+    var lineRangesForEditing: [NSRange] { lineRanges }
     private var lineRanges: [NSRange] {
         if let c = cachedLines { return c }
         let ns = string as NSString
@@ -98,43 +100,62 @@ final class CalcTextView: NSTextView {
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         refreshCurrentLine()
+        lineNumberRuler?.needsDisplay = true
     }
 
     // MARK: Current line
+    //
+    // Modelled on CotEditor: mark the highlight dirty on any change, repaint the old band plus the
+    // visible area, and measure the new band at draw time — after AppKit has settled the layout.
 
-    /// Last band drawn, so moving the cursor only repaints the old and new lines.
-    private var currentLineRect: NSRect?
-
-    /// The full-width band of the line holding the cursor, in view coordinates.
-    private func currentLineBand() -> NSRect? {
-        guard style.highlightLine, let lm = layoutManager, window?.firstResponder === self,
-              selectedRange().length == 0 else { return nil }
-        let ns = string as NSString
-        let loc = min(selectedRange().location, ns.length)
-        var rect: NSRect
-        if loc == ns.length, loc == 0 || ns.character(at: loc - 1) == 10 {
-            rect = lm.extraLineFragmentRect
-        } else {
-            rect = lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: min(loc, ns.length - 1)), effectiveRange: nil)
+    private var lineHighlightRects: [NSRect] = []
+    private var needsUpdateLineHighlight = true {
+        didSet {
+            guard needsUpdateLineHighlight else { return }
+            (lineHighlightRects + [visibleRect]).forEach { setNeedsDisplay($0, avoidAdditionalLayout: true) }
         }
-        guard rect.height > 0 else { return nil }
-        return NSRect(x: 0, y: rect.minY + textContainerOrigin.y, width: bounds.width, height: rect.height)
     }
 
-    private func refreshCurrentLine() {
-        let band = currentLineBand()
-        guard band != currentLineRect else { return }
-        if let old = currentLineRect { setNeedsDisplay(old) }
-        if let band { setNeedsDisplay(band) }
-        currentLineRect = band
+    private func refreshCurrentLine() { needsUpdateLineHighlight = true }
+
+    /// Bands covering every visual row of each line that holds a cursor or selection.
+    private func computeLineHighlightRects() -> [NSRect] {
+        guard let lm = layoutManager else { return [] }
+        let ns = string as NSString
+        var lines: [NSRange] = []
+        for value in selectedRanges {
+            let line = ns.lineRange(for: value.rangeValue)
+            if let last = lines.last, NSMaxRange(last) >= line.location { lines[lines.count - 1] = NSUnionRange(last, line) }
+            else { lines.append(line) }
+        }
+        return lines.compactMap { range -> NSRect? in
+            var rect: NSRect
+            if ns.length == 0 || (range.location >= ns.length && lm.extraLineFragmentTextContainer != nil) {
+                rect = lm.extraLineFragmentRect
+            } else {
+                let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                let lower = lm.isValidGlyphIndex(glyphs.location) ? glyphs.location : max(0, glyphs.location - 1)
+                var effective = NSRange()
+                rect = lm.lineFragmentRect(forGlyphAt: lower, effectiveRange: &effective)
+                if glyphs.length > 0, !NSLocationInRange(NSMaxRange(glyphs) - 1, effective) {
+                    rect = rect.union(lm.lineFragmentRect(forGlyphAt: NSMaxRange(glyphs) - 1, effectiveRange: nil))
+                }
+            }
+            guard rect.height > 0 else { return nil }
+            return NSRect(x: 0, y: rect.minY + textContainerOrigin.y, width: bounds.width, height: rect.height)
+        }
     }
 
     /// Draws under the glyphs (the hook CotEditor uses), so the highlight never tints the text.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
-        guard let band = currentLineBand(), band.intersects(rect) else { return }
+        guard style.highlightLine, window?.firstResponder === self else { return }
+        if needsUpdateLineHighlight {
+            lineHighlightRects = computeLineHighlightRects()
+            needsUpdateLineHighlight = false
+        }
         style.theme.text.withAlphaComponent(0.05).setFill()
-        band.intersection(rect).fill()
+        for band in lineHighlightRects where band.intersects(rect) { band.intersection(rect).fill() }
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -149,6 +170,7 @@ final class CalcTextView: NSTextView {
 
     private func refreshOverlay() {
         overlay.needsDisplay = true
+        lineNumberRuler?.needsDisplay = true
         window?.invalidateCursorRects(for: self)
     }
 
@@ -157,7 +179,7 @@ final class CalcTextView: NSTextView {
     private struct Slot { let line: Int; let rect: NSRect; let text: String }
 
     /// Line rectangles for the lines currently on screen only.
-    private func lineRects() -> [(line: Int, range: NSRange, rect: NSRect)] {
+    func lineRects(includeEmpty: Bool = false) -> [(line: Int, range: NSRange, rect: NSRect)] {
         guard let lm = layoutManager, let tc = textContainer else { return [] }
         var visible = visibleRect
         visible.origin.y -= textContainerOrigin.y
@@ -175,9 +197,21 @@ final class CalcTextView: NSTextView {
         for i in lo..<lines.count {
             let range = lines[i]
             if range.location > NSMaxRange(charsOnScreen) { break }
-            guard range.length > 0 else { continue }
-            let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            var frag = lm.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+            var frag: NSRect
+            if range.length > 0 {
+                let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                frag = lm.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+            } else if includeEmpty {
+                // Empty line: its newline glyph, or the extra fragment after a trailing newline.
+                if range.location < (string as NSString).length {
+                    frag = lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: range.location), effectiveRange: nil)
+                } else {
+                    frag = lm.extraLineFragmentRect
+                    if frag.height == 0 { continue }
+                }
+            } else {
+                continue
+            }
             frag.origin.y += textContainerOrigin.y
             out.append((i, range, frag))
         }
@@ -212,9 +246,13 @@ final class CalcTextView: NSTextView {
         for s in slots() where s.rect.intersects(dirtyRect) {
             let fade = s.line == copiedLine ? copyFade : 0
             if s.line == hoverLine || fade > 0 {
-                let size = (s.text as NSString).size(withAttributes: [.font: baseFont])
-                let w = min(s.rect.width, size.width) + 12
-                let bg = NSRect(x: s.rect.maxX - w + 6, y: s.rect.minY + 1, width: w, height: s.rect.height - 2)
+                // Wrap the text itself, not the whole line fragment (which includes the line spacing below it).
+                let shown = fade > 0.5 ? "Copied" : s.text
+                let textWidth = min(s.rect.width, (shown as NSString).size(withAttributes: [.font: baseFont]).width)
+                let textHeight = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
+                let padX: CGFloat = 6, padY: CGFloat = 2
+                let bg = NSRect(x: s.rect.maxX - textWidth - padX, y: s.rect.minY - padY,
+                                width: textWidth + padX * 2, height: textHeight + padY * 2)
                 t.result.withAlphaComponent((s.line == hoverLine ? 0.12 : 0) + 0.12 * fade).setFill()
                 NSBezierPath(roundedRect: bg, xRadius: 5, yRadius: 5).fill()
             }
@@ -427,6 +465,14 @@ struct EditorView: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.scrollerStyle = .overlay
         scroll.documentView = tv
+        let ruler = LineNumberRuler(scrollView: scroll, editor: tv)
+        scroll.verticalRulerView = ruler
+        scroll.hasVerticalRuler = true
+        scroll.rulersVisible = style.lineNumbers
+        tv.lineNumberRuler = ruler
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView,
+                                               queue: .main) { [weak ruler] _ in ruler?.needsDisplay = true }
         scroll.contentView.postsFrameChangedNotifications = true
         library.textView = tv
         context.coordinator.textView = tv
@@ -436,6 +482,8 @@ struct EditorView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let tv = scroll.documentView as? CalcTextView else { return }
+        if scroll.rulersVisible != style.lineNumbers { scroll.rulersVisible = style.lineNumbers }
+        (scroll.verticalRulerView as? LineNumberRuler)?.updateThickness()
         tv.style = style
         if context.coordinator.generation != library.loadGeneration {
             context.coordinator.generation = library.loadGeneration
@@ -502,5 +550,199 @@ final class CalcTextContainer: NSTextContainer {
         let usable = size.width - Self.columnWidth(size.width + inset * 2, resultFraction)
         rect.size.width = max(80, min(rect.width, usable))
         return rect
+    }
+}
+
+// MARK: - Line editing (move, duplicate, delete, toggle comment)
+
+extension CalcTextView {
+    /// Lines touched by the selection (a selection ending at the very start of a line doesn't include it).
+    private func selectedLines() -> ClosedRange<Int> {
+        let lines = lineIndex
+        let sel = selectedRange()
+        let first = lines(sel.location)
+        var endLoc = NSMaxRange(sel)
+        if sel.length > 0, endLoc > sel.location, (string as NSString).character(at: endLoc - 1) == 10 { endLoc -= 1 }
+        return first...max(first, lines(endLoc))
+    }
+
+    /// Index of the line containing a character offset (binary search over cached line ranges).
+    private var lineIndex: (Int) -> Int {
+        let ranges = lineRangesForEditing
+        return { loc in
+            var lo = 0, hi = ranges.count - 1
+            while lo < hi {
+                let mid = (lo + hi + 1) / 2
+                if ranges[mid].location <= loc { lo = mid } else { hi = mid - 1 }
+            }
+            return lo
+        }
+    }
+
+    private func lineText(_ i: Int) -> String { (string as NSString).substring(with: lineRangesForEditing[i]) }
+
+    /// Replaces `range` as one undoable edit and selects `selection` afterwards.
+    private func replace(_ range: NSRange, with text: String, select selection: NSRange, action: String) {
+        guard shouldChangeText(in: range, replacementString: text) else { return }
+        textStorage?.replaceCharacters(in: range, with: text)
+        didChangeText()
+        undoManager?.setActionName(action)
+        let length = (string as NSString).length
+        let loc = min(max(0, selection.location), length)
+        setSelectedRange(NSRange(location: loc, length: min(selection.length, length - loc)))
+        scrollRangeToVisible(selectedRange())
+    }
+
+    private func span(_ lines: ClosedRange<Int>) -> NSRange {
+        let r = lineRangesForEditing
+        return NSRange(location: r[lines.lowerBound].location,
+                       length: NSMaxRange(r[lines.upperBound]) - r[lines.lowerBound].location)
+    }
+
+    @objc func moveLinesUp(_ sender: Any?) {
+        let lines = selectedLines()
+        guard lines.lowerBound > 0 else { return }
+        let above = lineText(lines.lowerBound - 1)
+        let block = lines.map(lineText)
+        let shift = (above as NSString).length + 1
+        let sel = selectedRange()
+        replace(span(lines.lowerBound - 1...lines.upperBound), with: (block + [above]).joined(separator: "\n"),
+                select: NSRange(location: sel.location - shift, length: sel.length), action: "Move Line Up")
+    }
+
+    @objc func moveLinesDown(_ sender: Any?) {
+        let lines = selectedLines()
+        guard lines.upperBound < lineRangesForEditing.count - 1 else { return }
+        let below = lineText(lines.upperBound + 1)
+        let block = lines.map(lineText)
+        let shift = (below as NSString).length + 1
+        let sel = selectedRange()
+        replace(span(lines.lowerBound...lines.upperBound + 1), with: ([below] + block).joined(separator: "\n"),
+                select: NSRange(location: sel.location + shift, length: sel.length), action: "Move Line Down")
+    }
+
+    @objc func duplicateLines(_ sender: Any?) {
+        let lines = selectedLines()
+        let block = lines.map(lineText).joined(separator: "\n")
+        let shift = (block as NSString).length + 1
+        let sel = selectedRange()
+        replace(span(lines), with: block + "\n" + block,
+                select: NSRange(location: sel.location + shift, length: sel.length), action: "Duplicate Line")
+    }
+
+    @objc func deleteLines(_ sender: Any?) {
+        let lines = selectedLines()
+        let r = lineRangesForEditing
+        let ns = string as NSString
+        var range: NSRange
+        if lines.upperBound < r.count - 1 {
+            range = NSRange(location: r[lines.lowerBound].location, length: r[lines.upperBound + 1].location - r[lines.lowerBound].location)
+        } else if lines.lowerBound > 0 {
+            let start = NSMaxRange(r[lines.lowerBound - 1])
+            range = NSRange(location: start, length: ns.length - start)
+        } else {
+            range = NSRange(location: 0, length: ns.length)
+        }
+        let caret = lines.upperBound < r.count - 1 ? range.location : (lines.lowerBound > 0 ? r[lines.lowerBound - 1].location : 0)
+        replace(range, with: "", select: NSRange(location: caret, length: 0), action: "Delete Line")
+    }
+
+    /// Adds "// " to every line, or removes it if all non-empty lines are already commented.
+    @objc func toggleLineComment(_ sender: Any?) {
+        let lines = selectedLines()
+        let texts = lines.map(lineText)
+        func indentEnd(_ s: String) -> String.Index { s.firstIndex { $0 != " " && $0 != "\t" } ?? s.endIndex }
+        let content = texts.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let uncomment = !content.isEmpty && content.allSatisfy { $0[indentEnd($0)...].hasPrefix("//") }
+        let updated = texts.map { line -> String in
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return line }
+            let i = indentEnd(line)
+            if uncomment {
+                var rest = line[i...].dropFirst(2)
+                if rest.hasPrefix(" ") { rest = rest.dropFirst() }
+                return String(line[..<i]) + rest
+            }
+            return String(line[..<i]) + "// " + line[i...]
+        }
+        let range = span(lines)
+        let joined = updated.joined(separator: "\n")
+        let sel = selectedRange()
+        let newSelection: NSRange
+        if sel.length == 0, lines.count == 1 {
+            // Keep the caret on the same character.
+            let delta = (joined as NSString).length - range.length
+            newSelection = NSRange(location: max(range.location, sel.location + delta), length: 0)
+        } else {
+            newSelection = NSRange(location: range.location, length: (joined as NSString).length)
+        }
+        replace(range, with: joined, select: newSelection, action: uncomment ? "Uncomment" : "Comment")
+    }
+}
+
+// MARK: - Line numbers
+
+/// Line-number gutter, CotEditor-style: an NSRulerView on the scroll view that draws numbers for the
+/// visible lines only.
+final class LineNumberRuler: NSRulerView {
+    private weak var editor: CalcTextView?
+
+    init(scrollView: NSScrollView, editor: CalcTextView) {
+        self.editor = editor
+        super.init(scrollView: scrollView, orientation: .verticalRuler)
+        clientView = editor
+        clipsToBounds = true
+        updateThickness()
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    private var numberFont: NSFont {
+        let size = (editor?.style.fontSize ?? 15) * 0.8
+        return .monospacedDigitSystemFont(ofSize: size, weight: .regular)
+    }
+
+    func updateThickness() {
+        let lines = editor?.lineRangesForEditing.count ?? 1
+        let digits = max(2, String(lines).count)
+        let digitWidth = ("8" as NSString).size(withAttributes: [.font: numberFont]).width
+        let thickness = ceil(CGFloat(digits) * digitWidth + 18)
+        if abs(ruleThickness - thickness) > 0.5 { ruleThickness = thickness }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // Since macOS 14 views don't clip by default; never paint outside the gutter.
+        let area = dirtyRect.intersection(bounds)
+        (editor?.style.theme.background ?? .textBackgroundColor).setFill()
+        area.fill()
+        drawHashMarksAndLabels(in: area)
+    }
+
+    override func drawHashMarksAndLabels(in rect: NSRect) {
+        guard let tv = editor else { return }
+        updateThickness()
+        let theme = tv.style.theme
+        let ns = tv.string as NSString
+        let caretLine: Int = {
+            let loc = min(tv.selectedRange().location, ns.length)
+            let ranges = tv.lineRangesForEditing
+            return ranges.lastIndex { $0.location <= loc } ?? 0
+        }()
+        let font = numberFont
+        let textFont = tv.baseFont
+        let para = NSMutableParagraphStyle()
+        para.alignment = .right
+        for (line, _, frag) in tv.lineRects(includeEmpty: true) {
+            let top = convert(NSPoint(x: 0, y: frag.minY), from: tv).y
+            // Align the number's baseline with the text's first line.
+            let y = top + (textFont.ascender - font.ascender)
+            let r = NSRect(x: 0, y: y, width: ruleThickness - 9, height: frag.height)
+            guard r.intersects(rect.insetBy(dx: 0, dy: -frag.height)) else { continue }
+            let color = line == caretLine ? theme.text.withAlphaComponent(0.85) : theme.comment
+            ("\(line + 1)" as NSString).draw(with: r, options: [.usesLineFragmentOrigin],
+                                              attributes: [.font: font, .foregroundColor: color, .paragraphStyle: para])
+        }
     }
 }

@@ -5,6 +5,7 @@ import TallyEngine
 struct TallyApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     private let library = Library.shared
+    @AppStorage("lineNumbers") private var lineNumbers = true
 
     var body: some Scene {
         Window("Tally", id: "main") {
@@ -28,7 +29,7 @@ struct TallyApp: App {
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(library.selection == nil)
                 Button("Duplicate") { if let s = library.selection { library.duplicate(s) } }
-                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                    .keyboardShortcut("d", modifiers: [.command, .shift, .option])
                     .disabled(library.selection == nil)
                 Divider()
                 Button("Show Tally Folder in Finder") { library.reveal(nil) }
@@ -42,6 +43,19 @@ struct TallyApp: App {
                 Button("Print…") { library.printDocument() }.keyboardShortcut("p")
             }
             CommandGroup(after: .textEditing) {
+                Menu("Line") {
+                    Button("Move Line Up") { LineAction.send(#selector(CalcTextView.moveLinesUp(_:))) }
+                        .keyboardShortcut(.upArrow, modifiers: [.command, .control])
+                    Button("Move Line Down") { LineAction.send(#selector(CalcTextView.moveLinesDown(_:))) }
+                        .keyboardShortcut(.downArrow, modifiers: [.command, .control])
+                    Button("Duplicate Line") { LineAction.send(#selector(CalcTextView.duplicateLines(_:))) }
+                        .keyboardShortcut("d", modifiers: [.command, .shift])
+                    Button("Delete Line") { LineAction.send(#selector(CalcTextView.deleteLines(_:))) }
+                        .keyboardShortcut("k", modifiers: [.control, .shift])
+                    Divider()
+                    Button("Toggle Comment") { LineAction.send(#selector(CalcTextView.toggleLineComment(_:))) }
+                        .keyboardShortcut("/", modifiers: .command)
+                }
                 Menu("Find") {
                     Button("Find…") { FindAction.send(.showFindInterface) }.keyboardShortcut("f")
                     Button("Find and Replace…") { FindAction.send(.showReplaceInterface) }
@@ -60,6 +74,8 @@ struct TallyApp: App {
             }
             SidebarCommands()
             CommandGroup(after: .sidebar) {
+                Divider()
+                Toggle("Show Line Numbers", isOn: $lineNumbers)
                 Divider()
                 Button("Zoom In") { Zoom.step(1) }.keyboardShortcut("+")
                 Button("Zoom Out") { Zoom.step(-1) }.keyboardShortcut("-")
@@ -91,6 +107,11 @@ struct TallyApp: App {
         }
         .windowResizability(.contentSize)
     }
+}
+
+/// Sends a line-editing command to the focused editor.
+enum LineAction {
+    static func send(_ action: Selector) { NSApp.sendAction(action, to: nil, from: nil) }
 }
 
 /// Drives the editor's native find bar (NSTextFinder) from the menu.

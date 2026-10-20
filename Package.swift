@@ -8,6 +8,7 @@ let package = Package(
         .target(name: "TallyEngine", path: "Sources/TallyEngine"),
         .executableTarget(name: "TallyApp", dependencies: ["TallyEngine"], path: "Sources/TallyApp"),
         .testTarget(name: "TallyEngineTests", dependencies: ["TallyEngine"], path: "Tests/TallyEngineTests"),
+        .testTarget(name: "TallyAppTests", dependencies: ["TallyApp"], path: "Tests/TallyAppTests"),
     ],
     swiftLanguageModes: [.v5]
 )
