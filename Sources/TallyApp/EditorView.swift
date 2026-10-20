@@ -67,8 +67,32 @@ final class CalcTextView: NSTextView {
     }
 
     override func didChangeText() {
+        cachedLines = nil
         super.didChangeText()
         refreshOverlay()
+    }
+
+    override var string: String {
+        get { super.string }
+        set { super.string = newValue; cachedLines = nil }
+    }
+
+    /// Range of each line (without its newline), computed once per text change instead of on every
+    /// draw — the overlay redraws on every frame of a sidebar animation or window resize.
+    private var cachedLines: [NSRange]?
+    private var lineRanges: [NSRange] {
+        if let c = cachedLines { return c }
+        let ns = string as NSString
+        var out: [NSRange] = []
+        var start = 0
+        while true {
+            let nl = ns.range(of: "\n", range: NSRange(location: start, length: ns.length - start))
+            if nl.location == NSNotFound { out.append(NSRange(location: start, length: ns.length - start)); break }
+            out.append(NSRange(location: start, length: nl.location - start))
+            start = nl.location + 1
+        }
+        cachedLines = out
+        return out
     }
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
@@ -85,16 +109,26 @@ final class CalcTextView: NSTextView {
 
     private struct Slot { let line: Int; let rect: NSRect; let text: String }
 
+    /// Line rectangles for the lines currently on screen only.
     private func lineRects() -> [(line: Int, range: NSRange, rect: NSRect)] {
-        guard let lm = layoutManager else { return [] }
-        let ns = string as NSString
+        guard let lm = layoutManager, let tc = textContainer else { return [] }
+        var visible = visibleRect
+        visible.origin.y -= textContainerOrigin.y
+        var glyphsOnScreen = lm.glyphRange(forBoundingRectWithoutAdditionalLayout: visible, in: tc)
+        if glyphsOnScreen.length == 0 { glyphsOnScreen = lm.glyphRange(forBoundingRect: visible, in: tc) }
+        let charsOnScreen = lm.characterRange(forGlyphRange: glyphsOnScreen, actualGlyphRange: nil)
+        let lines = lineRanges
+        // First line that ends at or after the visible range (binary search).
+        var lo = 0, hi = lines.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if NSMaxRange(lines[mid]) < charsOnScreen.location { lo = mid + 1 } else { hi = mid }
+        }
         var out: [(Int, NSRange, NSRect)] = []
-        var offset = 0
-        for (i, line) in string.components(separatedBy: "\n").enumerated() {
-            let len = (line as NSString).length
-            defer { offset += len + 1 }
-            guard len > 0, offset < ns.length else { continue }
-            let range = NSRange(location: offset, length: len)
+        for i in lo..<lines.count {
+            let range = lines[i]
+            if range.location > NSMaxRange(charsOnScreen) { break }
+            guard range.length > 0 else { continue }
             let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
             var frag = lm.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
             frag.origin.y += textContainerOrigin.y
@@ -286,13 +320,11 @@ final class CalcTextView: NSTextView {
         storage.beginEditing()
         storage.setAttributes([.font: font, .paragraphStyle: paragraph, .foregroundColor: t.text], range: full)
         lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
-        var offset = 0
-        for (i, line) in string.components(separatedBy: "\n").enumerated() {
-            let len = (line as NSString).length
-            defer { offset += len + 1 }
+        for (i, lineRange) in lineRanges.enumerated() {
+            let len = lineRange.length
+            let offset = lineRange.location
             guard i < results.count, len > 0 else { continue }
             let r = results[i]
-            let lineRange = NSRange(location: offset, length: len)
             if r.kind == .header { storage.addAttribute(.font, value: bold, range: lineRange) }
             if r.kind == .text { lm.addTemporaryAttribute(.foregroundColor, value: t.secondary, forCharacterRange: lineRange) }
             for span in r.spans where span.range.upperBound <= len {

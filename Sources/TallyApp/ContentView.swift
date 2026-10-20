@@ -18,8 +18,15 @@ struct ContentView: View {
     @State private var editing: URL?
     @State private var draft = ""
     @State private var trashing: CalcFile?
-    @State private var copiedTotal = false
     @FocusState private var renameFocused: Bool
+    /// SwiftUI owns this so the split view can animate it; the saved setting just mirrors it.
+    @State private var visibility: NavigationSplitViewVisibility
+
+    init(library: Library) {
+        self.library = library
+        let saved = UserDefaults.standard.object(forKey: "showSidebar") as? Bool ?? true
+        _visibility = State(initialValue: saved ? .all : .detailOnly)
+    }
 
     private var theme: Theme { Theme.named(themeID) }
     private var z: CGFloat { CGFloat(zoom) }
@@ -29,14 +36,8 @@ struct ContentView: View {
                     resultFraction: resultFraction, highlightLine: highlightLine)
     }
 
-    /// The native split view owns the collapse animation; this just maps it onto the saved setting.
-    private var columnVisibility: Binding<NavigationSplitViewVisibility> {
-        Binding(get: { showSidebar ? .all : .detailOnly },
-                set: { showSidebar = $0 != .detailOnly })
-    }
-
     var body: some View {
-        NavigationSplitView(columnVisibility: columnVisibility) {
+        NavigationSplitView(columnVisibility: $visibility) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 150, ideal: 200, max: 340)
         } detail: {
@@ -46,7 +47,7 @@ struct ContentView: View {
                 } else {
                     emptyState
                 }
-                if showTotal { footer }
+                if showTotal { FooterView(library: library, theme: theme, zoom: z) }
             }
             .background(theme.background.swiftUI.ignoresSafeArea())
             .toolbar { toolbarContent }
@@ -63,6 +64,15 @@ struct ContentView: View {
             }
         } message: {
             Text("You can restore it from the Trash in Finder.")
+        }
+        .onChange(of: visibility) { _, v in
+            let shown = v != .detailOnly
+            if showSidebar != shown { showSidebar = shown }
+        }
+        .onChange(of: showSidebar) { _, shown in
+            // The Settings toggle: animate the same way the toolbar button does.
+            let v: NavigationSplitViewVisibility = shown ? .all : .detailOnly
+            if visibility != v { withAnimation { visibility = v } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .newCalculation)) { _ in createFile() }
         .onReceive(NotificationCenter.default.publisher(for: .renameCurrent)) { _ in
@@ -172,7 +182,7 @@ struct ContentView: View {
     // MARK: Files
 
     private func createFile() {
-        if !showSidebar { showSidebar = true }
+        if visibility == .detailOnly { withAnimation { visibility = .all } }
         var url: URL?
         withAnimation(.easeOut(duration: 0.15)) { url = library.newFile() }
         if let url { startRename(url) }
@@ -214,8 +224,18 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var footer: some View {
-        HStack(spacing: 8 * z) {
+}
+
+/// Total and current-line error. Its own view so that typing only refreshes this bar,
+/// not the whole window (split view, sidebar and toolbar).
+struct FooterView: View {
+    let library: Library
+    let theme: Theme
+    let zoom: CGFloat
+    @State private var copiedTotal = false
+
+    var body: some View {
+        HStack(spacing: 8 * zoom) {
             if let err = library.currentLineError {
                 Image(systemName: "exclamationmark.circle").foregroundStyle(theme.variable.swiftUI)
                 Text(err).foregroundStyle(theme.secondary.swiftUI).lineLimit(1).truncationMode(.tail)
@@ -228,7 +248,7 @@ struct ContentView: View {
                     copiedTotal = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { copiedTotal = false }
                 } label: {
-                    HStack(spacing: 6 * z) {
+                    HStack(spacing: 6 * zoom) {
                         Text(copiedTotal ? "Copied" : "Total").foregroundStyle(theme.secondary.swiftUI)
                         Text(total).foregroundStyle(theme.result.swiftUI).monospacedDigit()
                     }
@@ -237,9 +257,9 @@ struct ContentView: View {
                 .help("Click to copy the total")
             }
         }
-        .font(.system(size: 12 * z))
-        .padding(.horizontal, 22 * z)
-        .frame(height: 30 * z)
+        .font(.system(size: 12 * zoom))
+        .padding(.horizontal, 22 * zoom)
+        .frame(height: 30 * zoom)
         .background(theme.text.swiftUI.opacity(0.03))
         .overlay(alignment: .top) { Rectangle().fill(theme.text.swiftUI.opacity(0.06)).frame(height: 1) }
     }
@@ -295,13 +315,19 @@ struct WindowConfigurator: NSViewRepresentable {
     let theme: Theme
     let alwaysOnTop: Bool
 
+    final class Coordinator { var applied: (theme: String, onTop: Bool)? }
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSView { NSView() }
 
+    /// Re-applying appearance redraws the whole window, so only touch it when something changed.
     func updateNSView(_ view: NSView, context: Context) {
+        let key = (theme: theme.id, onTop: alwaysOnTop)
+        if let a = context.coordinator.applied, a == key, view.window != nil { return }
         DispatchQueue.main.async {
             guard let w = view.window else { return }
+            context.coordinator.applied = key
             w.titlebarSeparatorStyle = .none
-            w.appearance = theme.appearance
+            if w.appearance != theme.appearance { w.appearance = theme.appearance }
             w.backgroundColor = theme.background
             w.level = alwaysOnTop ? .floating : .normal
         }
