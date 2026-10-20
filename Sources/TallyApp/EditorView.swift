@@ -35,7 +35,7 @@ final class CalcTextView: NSTextView {
     private var baseFont: NSFont { FontCatalog.font(style.fontID, size: style.fontSize) }
     private var paragraph = NSParagraphStyle()
 
-    var resultColumnWidth: CGFloat { max(120, bounds.width * style.resultFraction) }
+    var resultColumnWidth: CGFloat { CalcTextContainer.columnWidth(bounds.width, style.resultFraction) }
 
     func applyStyle() {
         let p = NSMutableParagraphStyle()
@@ -46,24 +46,20 @@ final class CalcTextView: NSTextView {
         insertionPointColor = t.text
         selectedTextAttributes = [.backgroundColor: t.selection]
         defaultParagraphStyle = p
-        updateContainerWidth()
+        if let tc = textContainer as? CalcTextContainer, tc.resultFraction != style.resultFraction {
+            tc.resultFraction = style.resultFraction
+            layoutManager?.textContainerChangedGeometry(tc)
+        }
         applyHighlighting()
         refreshOverlay()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
-        var size = newSize
-        // Always match the visible width so the results column stays on screen.
-        if let clip = enclosingScrollView?.contentView { size.width = clip.bounds.width }
-        super.setFrameSize(size)
+        super.setFrameSize(newSize)
         overlay.frame = bounds
-        updateContainerWidth()
-    }
-
-    private func updateContainerWidth() {
-        guard let tc = textContainer else { return }
-        let w = max(80, bounds.width - resultColumnWidth - textContainerInset.width * 2)
-        if abs(tc.size.width - w) > 0.5 { tc.size = NSSize(width: w, height: .greatestFiniteMagnitude) }
+        // Results are right-aligned, so they must be redrawn (not stretched or shifted) on every frame
+        // of a resize or sidebar animation.
+        overlay.needsDisplay = true
     }
 
     override func didChangeText() {
@@ -150,6 +146,8 @@ final class CalcTextView: NSTextView {
     private lazy var overlay: ResultsOverlay = {
         let v = ResultsOverlay(frame: bounds)
         v.owner = self
+        v.wantsLayer = true
+        v.layerContentsRedrawPolicy = .duringViewResize
         v.autoresizingMask = [.width, .height]
         addSubview(v)
         return v
@@ -347,11 +345,14 @@ struct EditorView: NSViewRepresentable {
         let storage = NSTextStorage()
         let lm = NSLayoutManager()
         storage.addLayoutManager(lm)
-        let container = NSTextContainer(size: NSSize(width: 400, height: CGFloat.greatestFiniteMagnitude))
-        container.widthTracksTextView = false
+        // Width follows the text view through normal autoresizing; the container itself keeps text out of
+        // the results column, so a resize or sidebar animation is a single AppKit layout pass per frame.
+        let container = CalcTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        container.resultFraction = style.resultFraction
         lm.addTextContainer(container)
 
-        let tv = CalcTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), textContainer: container)
+        let tv = CalcTextView(frame: .zero, textContainer: container)
         tv.isRichText = false
         tv.importsGraphics = false
         tv.allowsUndo = true
@@ -390,8 +391,6 @@ struct EditorView: NSViewRepresentable {
         scroll.scrollerStyle = .overlay
         scroll.documentView = tv
         scroll.contentView.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroll.contentView,
-                                               queue: .main) { _ in tv.setFrameSize(tv.frame.size) }
         library.textView = tv
         context.coordinator.textView = tv
         DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
@@ -443,4 +442,28 @@ final class ResultsOverlay: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) { owner?.drawResults(dirtyRect) }
+}
+
+/// Text container that reserves the right-hand results column, so the text view can simply track its
+/// scroll view's width and AppKit handles every resize in one layout pass.
+final class CalcTextContainer: NSTextContainer {
+    var resultFraction: CGFloat = 0.4
+    /// Horizontal inset of the text view, so the column matches what the overlay draws.
+    var inset: CGFloat = 22
+
+    static func columnWidth(_ viewWidth: CGFloat, _ fraction: CGFloat) -> CGFloat {
+        max(120, viewWidth * fraction)
+    }
+
+    override var isSimpleRectangularTextContainer: Bool { false }
+
+    override func lineFragmentRect(forProposedRect proposedRect: NSRect, at characterIndex: Int,
+                                   writingDirection baseWritingDirection: NSWritingDirection,
+                                   remaining remainingRect: UnsafeMutablePointer<NSRect>?) -> NSRect {
+        var rect = super.lineFragmentRect(forProposedRect: proposedRect, at: characterIndex,
+                                          writingDirection: baseWritingDirection, remaining: remainingRect)
+        let usable = size.width - Self.columnWidth(size.width + inset * 2, resultFraction)
+        rect.size.width = max(80, min(rect.width, usable))
+        return rect
+    }
 }
