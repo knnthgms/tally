@@ -69,6 +69,7 @@ public final class Engine: @unchecked Sendable {
     }
 
     private static let labelRegex = try! NSRegularExpression(pattern: #"^\s*([^:=]*?[\p{L}][^:=]*?):(?!\d)"#)
+    private static let nameRegex = try! NSRegularExpression(pattern: #"^[\p{L}_][\p{L}0-9_]*(?: [\p{L}_][\p{L}0-9_]*){0,3}$"#)
     private static let assignRegex = try! NSRegularExpression(pattern: #"^\s*([\p{L}_][\p{L}0-9_]*(?: [\p{L}_][\p{L}0-9_]*){0,3})\s*=(?!=)"#)
 
     private func evaluateLine(_ line: String, scope: Scope, previous: [LineResult]) -> LineResult {
@@ -97,6 +98,13 @@ public final class Engine: @unchecked Sendable {
         } else if let m = Self.labelRegex.firstMatch(in: line, range: head) {
             spans.append(HighlightSpan(range: 0..<NSMaxRange(m.range), style: .label))
             start = NSMaxRange(m.range)
+            // Labels double as variables ("Flights: 2 × €189" → Flights), unless they'd shadow a built-in word
+            // like total/sum/time/hours, which only an explicit `name =` may do.
+            let name = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            let whole = NSRange(location: 0, length: (name as NSString).length)
+            if Self.nameRegex.firstMatch(in: name, range: whole) != nil, lexicon.meanings(name, rates: rates).isEmpty {
+                assignTo = name
+            }
         }
 
         let expr = ns.substring(with: NSRange(location: start, length: end - start))
@@ -109,7 +117,7 @@ public final class Engine: @unchecked Sendable {
             try self.aggregate(k, previous: previous, scope: scope)
         }
         do {
-            let v = try parser.parse()
+            let v = scope.settled(try parser.parse())
             if let name = assignTo { scope.variables[name] = v }
             return LineResult(kind: .value, value: v, display: formatter.format(v), spans: spans,
                               isAggregate: parser.usedAggregate)

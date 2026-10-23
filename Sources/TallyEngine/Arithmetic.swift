@@ -44,6 +44,8 @@ final class Scope {
     // MARK: Conversion
 
     func convert(_ q: Quantity, to target: CompoundUnit) throws -> Quantity {
+        var q = q
+        if target.isCurrency, case .quantity(let s) = settled(.quantity(q)) { q = s }
         if q.unit.isEmpty || target.isEmpty { return Quantity(q.value, target, style: q.style) }
         guard q.unit.dim == target.dim else {
             throw CalcError("Can't convert \(engine.formatter.unitText(q.unit, 2)) to \(engine.formatter.unitText(target, 2))")
@@ -85,6 +87,16 @@ final class Scope {
         return Quantity(value, unit, style: style)
     }
 
+    /// Money times a count-like unit is just money (5 days × €45 = €225, not 225 d·EUR).
+    /// Applied lazily, so rates still cancel (5 days × €45 / day = €225); per-unit prices (€/d) are kept.
+    func settled(_ v: Value) -> Value {
+        guard case .quantity(let q) = v else { return v }
+        let money = q.unit.terms.filter { $0.unit.kind == .currency }
+        guard q.unit.terms.count > 1, money.count == 1, money[0].power == 1,
+              q.unit.terms.allSatisfy({ $0.power > 0 }) else { return v }
+        return .quantity(Quantity(q.value, CompoundUnit(money[0].unit), style: q.style))
+    }
+
     func power(_ a: Quantity, _ e: Double) throws -> Quantity {
         if a.unit.isEmpty { return Quantity(pow(a.value, e), style: a.style) }
         if e == e.rounded() {
@@ -102,7 +114,7 @@ final class Scope {
     // MARK: Value operations
 
     func add(_ a: Value, _ b: Value, sign: Double) throws -> Value {
-        switch (a, b) {
+        switch (settled(a), settled(b)) {
         case (.quantity(let x), .quantity(let y)):
             if x.unit.isEmpty && !y.unit.isEmpty {
                 // 5 + $3 → $8

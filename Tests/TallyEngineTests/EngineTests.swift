@@ -267,3 +267,43 @@ final class PasteTests: XCTestCase {
         XCTAssertEqual(e.stripPastedResults("x - 3 = -$1", context: "x = $2"), "x - 3")
     }
 }
+
+extension EngineTests {
+    // Quirk: "Total:" looked like it collided with the total/sum keyword; really Food was 225 d·EUR.
+    func testTotalLabelOverTripCosts() {
+        let lines = doc("Flights = 2 × €189\nHotel = 3 × €80\nFood = 5 days × €45\nTotal: Flights + Hotel + Food")
+        XCTAssertEqual(lines[3], "€843")
+        XCTAssertEqual(doc("Total: 5 + 5")[0], "10")
+    }
+
+    func testLabelsDefineVariables() {
+        let lines = doc("Flights: 2 × €189\nHotel: 3 × €80\nFood: 5 days × €45\nTrip: Flights + Hotel + Food\nTrip / 2")
+        XCTAssertEqual(lines[3], "€843")
+        XCTAssertEqual(lines[4], "€421.50")
+        XCTAssertEqual(doc("Coffee per week: 5 × $4\nCoffee per week × 52")[1], "$1,040")
+        XCTAssertEqual(doc("Rent : $1,000\nRent × 12")[1], "$12,000")
+    }
+
+    func testLabelsDontShadowBuiltIns() {
+        // "Total:" stays a label, so a later "total" still sums the block.
+        XCTAssertEqual(doc("3\n4\nTotal: 100\ntotal")[3], "107")
+        XCTAssertEqual(doc("Hours: 3\n2 hours in min")[1], "120 minutes")
+        // Labels that aren't name-shaped stay display-only.
+        XCTAssertEqual(doc("Day 1 (Mon): 5\nDay 1 + 1")[1], "")
+        // An explicit assignment can still shadow on purpose.
+        XCTAssertEqual(doc("total = 7\ntotal × 2")[1], "14")
+    }
+
+    func testMoneyTimesCountUnitIsMoney() {
+        XCTAssertEqual(r("5 days × €45"), "€225")
+        XCTAssertEqual(r("€45 × 5 days"), "€225")
+        XCTAssertEqual(r("3 m × €2"), "€6")
+        XCTAssertEqual(r("5 days × €45 + €10"), "€235")
+        XCTAssertEqual(r("5 days × €45 in USD"), "$281.25")
+        // Rates still cancel or stay rates.
+        XCTAssertEqual(r("5 days × €45 / day"), "€225")
+        XCTAssertEqual(r("5 h × $20/h"), "$100")
+        XCTAssertEqual(r("€90 / 2 days"), "45 EUR/d")
+        XCTAssertEqual(r("5 days × 3"), "15 days")
+    }
+}

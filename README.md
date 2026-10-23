@@ -39,7 +39,7 @@ swift test            # engine tests
 - Dates and time zones: `today + 3 weeks`, `next friday`, `2026-12-25 - today`, `time in Tokyo`, `2:30 pm HKT in Berlin`, `fromunix(…)`, `3 days ago`
 - Number bases and bitwise: `255 in hex`, `0b1010`, `in sci`, `& | xor << >>`
 - Functions: `sqrt cbrt root abs round ceil floor log ln exp fact sin cos tan asin acos atan sinh cosh tanh`
-- Documents: `# headers`, `// comments`, `Label: expr`, variables (multi-word allowed), `prev`, `sum`/`total`, `avg`, document total
+- Documents: `# headers`, `// comments`, `Label: expr` (also defines `Label` as a variable unless it is a built-in word like `Total`), variables (multi-word allowed), `prev`, `sum`/`total`, `avg`, document total
 
 ## Layout
 
