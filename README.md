@@ -1,6 +1,26 @@
+<div align="center">
+
 # Tally
 
-A native macOS notepad calculator in the spirit of Numi: type maths in plain language and results appear on the right. Each calculation is a plain `.txt` file in one folder (default `~/Documents/Tally`), so you can edit, sync or version them anywhere.
+**A native macOS notepad calculator.** Type maths in plain language, and answers appear in a column on the right.
+
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-111?logo=apple&logoColor=white)
+![Swift](https://img.shields.io/badge/Swift-SwiftUI%20%2B%20AppKit-F05138?logo=swift&logoColor=white)
+![No dependencies](https://img.shields.io/badge/dependencies-none-2EA44F)
+![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)
+
+<img src="docs/screenshot.png" width="760" alt="Tally showing a trip budget with currency conversion, percentages, time zones, dates and units">
+
+</div>
+
+Tally is in the spirit of [Numi](https://numi.app). Each calculation is a plain `.txt` file in one folder (default `~/Documents/Tally`), so you can edit, sync or version them with any tool.
+
+**Highlights**
+
+- A hand-written lexer, parser and evaluator (`TallyEngine`) with no UI dependency, covered by XCTest
+- Natural-language input: units, currencies, crypto, dates, time zones, percentages and number bases
+- Live exchange rates from free, keyless APIs, cached locally
+- A themed editor with tabs or a sidebar, line numbers, a current-line highlight, selectable monospaced fonts and Indian (lakh/crore) digit grouping
 
 ## Build
 
@@ -28,3 +48,7 @@ swift test            # engine tests
 - `Tests/TallyEngineTests`
 
 Exchange rates come from free, keyless public endpoints (open.er-api.com, Coinbase) and are cached in `~/Library/Application Support/Tally/rates.json`.
+
+## License
+
+[MIT](LICENSE) © Kenneth Gomes
