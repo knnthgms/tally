@@ -9,6 +9,8 @@
 ![No dependencies](https://img.shields.io/badge/dependencies-none-2EA44F)
 ![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)
 
+[**⬇ Download for Mac**](https://github.com/knnthgms/tally/releases/latest) (Apple silicon, macOS 14+)
+
 <img src="docs/screenshot.png" width="760" alt="Tally showing a trip budget with currency conversion, percentages, time zones, dates and units">
 
 </div>
